@@ -1,0 +1,5 @@
+sounddevice
+numpy
+keyboard
+pyperclip
+pyautogui

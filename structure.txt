@@ -1,0 +1,30 @@
+C:\VoiceAssistant\Version2\
+
+│
+├── main.py
+├── config.json
+├── requirements.txt
+│
+├── whisper\
+│   └── whisper-cli.exe
+│
+├── models\
+│   └── ggml-large-v3.bin
+│
+├── temp\
+│   └── record.wav
+│
+├── logs\
+│
+└── backup\
+
+
+F8
+ ↓
+Record
+ ↓
+Whisper medium/large multilingual
+ ↓
+Transcribe OR Translate
+ ↓
+Paste anywhere

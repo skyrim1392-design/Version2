@@ -1,0 +1,14 @@
+{
+    "model": "ggml-medium.bin",
+    "language_mode": "ENGLISH",
+    "task_mode": "TRANSCRIBE",
+    "microphone": "Microphone (High Definition Audio Device)",
+    "push_key": "f8",
+    "audio": {
+        "input_sample_rate": 44100,
+        "whisper_sample_rate": 16000,
+        "channels": 1
+    },
+    "threads": 8,
+    "gpu_device": 0
+}
