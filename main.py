@@ -9,7 +9,7 @@ import logger
 import text_output
 import tray
 import whisper_engine
-
+from app_state import state
 
 # ================= GLOBAL =================
 
@@ -65,6 +65,10 @@ def f8_down():
 
     audio.start_recording()
 
+    with state.lock:
+        state.status = "RECORDING"
+        state.recording = True
+print("STATE:", state.status)
 
 
 def f8_up():
@@ -113,7 +117,10 @@ def f8_up():
 
 
     data = audio.stop_recording()
+    with state.lock:
+        state.recording = False
 
+    print("STATE:", state.status)
 
     if data is None:
 
@@ -130,13 +137,20 @@ def f8_up():
     try:
 
         audio.save_wav(data)
-
+        with state.lock:
+            state.status = "PROCESSING"
+            state.processing = True
         text = whisper_engine.whisper_transcribe()
+
+        print("STATE:", state.status)
 
 
     finally:
-
         is_processing = False
+
+        with state.lock:
+            state.status = "IDLE"
+            state.processing = False
 
 
 
@@ -162,7 +176,7 @@ def safe_f8_down(e):
         f8_down()
 
 
-    except Exception as error:
+    except (OSError, RuntimeError) as error:
 
         print(
             "F8 press error:"
@@ -183,7 +197,7 @@ def safe_f8_up(e):
         f8_up()
 
 
-    except Exception as error:
+    except (OSError, RuntimeError) as error:
 
         print(
             "F8 release error:"

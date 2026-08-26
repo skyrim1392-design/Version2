@@ -1,36 +1,66 @@
 import os
+import threading
+import time
 
 import pystray
 from PIL import Image, ImageDraw
 
+from app_state import state
 from config import load_config, set_config_value
 
-# ================= ICON =================
+BASE_DIR = os.path.dirname(
+    os.path.abspath(__file__)
+)
 
-def create_icon():
+def create_icon(status):
 
-    image = Image.new(
+    files = {
+
+        "IDLE": "idle.png",
+
+        "RECORDING": "recording.png",
+
+        "PROCESSING": "processing.png",
+
+        "ERROR": "error.png"
+
+    }
+
+
+    filename = files.get(
+        status,
+        "idle.png"
+    )
+
+
+    path = os.path.join(
+        ICON_DIR,
+        filename
+    )
+
+
+    if os.path.exists(path):
+
+        return Image.open(path)
+
+
+    print(
+        "Icon missing:",
+        path
+    )
+
+    return Image.new(
         "RGB",
-        (64, 64),
+        (64,64),
         "black"
     )
 
-    draw = ImageDraw.Draw(image)
+# ================= ICON =================
 
-    draw.ellipse(
-        (16, 8, 48, 56),
-        outline="white",
-        width=4
-    )
-
-    draw.line(
-        (32, 56, 32, 60),
-        fill="white",
-        width=4
-    )
-
-    return image
-
+ICON_DIR = os.path.join(
+    BASE_DIR,
+    "icons"
+)
 
 # ================= GPU =================
 
@@ -237,14 +267,47 @@ def exit_application(icon, item):
     )
 
     icon.stop()
+#==================update====================
+def update_tray(icon):
+
+    last_status = None
 
 
+    while True:
+
+        with state.lock:
+
+            current_status = state.status
+
+
+        if current_status != last_status:
+
+            print(
+                "TRAY STATUS:",
+                current_status
+            )
+
+
+            icon.icon = create_icon(
+                current_status
+            )
+
+
+            icon.title = (
+                "Voice Assistant - "
+                + current_status
+            )
+
+
+            last_status = current_status
+
+
+        time.sleep(0.5)
 # ================= TRAY =================
 
 def start_tray():
 
-    icon_image = create_icon()
-
+    icon_image = create_icon("IDLE")
 
     # ================= GPU MENU =================
 
@@ -377,5 +440,12 @@ def start_tray():
         "Voice Assistant",
         menu
     )
+    status_thread = threading.Thread(
+    target=update_tray,
+    args=(icon,),
+    daemon=True
+    )
+
+    status_thread.start()
 
     icon.run()

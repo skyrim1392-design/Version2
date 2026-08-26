@@ -283,7 +283,8 @@ def stop_recording():
 
     stream = None
 
-
+    with state.lock:
+        state.last_audio_samples = len(recording)
     if len(recording) == 0:
 
         print("No audio")
