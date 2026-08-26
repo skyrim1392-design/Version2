@@ -5,7 +5,6 @@ from PIL import Image, ImageDraw
 
 from config import load_config, set_config_value
 
-
 # ================= ICON =================
 
 def create_icon():

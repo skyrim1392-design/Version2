@@ -7,6 +7,7 @@ from scipy.signal import resample_poly
 
 import config
 import logger
+from app_state import state
 
 # ================= PATHS =================
 
@@ -113,25 +114,22 @@ def find_microphone(mic_name):
 
 # ================= AUDIO CALLBACK =================
 
-def audio_callback(
-    indata,
-    frames,
-    time_info,
-    status
-):
+def audio_callback(indata, frames, time_info, status):
 
     if status:
-
-        print(status)
-
-        logger.info(
-            f"Audio callback status: {status}"
+        logger.warning(
+            f"Audio callback warning: {status}"
         )
 
-    recording.append(
-        indata.copy()
-    )
+    recording.append(indata.copy())
 
+    with state.lock:
+
+        state.last_audio_samples += frames
+
+        state.microphone_level = float(
+            np.max(np.abs(indata))
+        )
 
 # ================= START RECORDING =================
 
@@ -200,8 +198,7 @@ def start_recording():
 
         stream.start()
 
-    except Exception as e:
-
+    except (sd.PortAudioError, OSError) as e:
         stream = None
         is_recording = False
 
@@ -212,6 +209,12 @@ def start_recording():
         raise
 
     is_recording = True
+    with state.lock:
+
+        state.recording = True
+        state.microphone_connected = True
+        state.last_audio_samples = 0
+        state.error = None
 
     print(
         "🎙️ Recording..."
@@ -229,57 +232,61 @@ def stop_recording():
     global stream
     global is_recording
 
-    print(
-        "STOP RECORD FUNCTION"
-    )
-
-    logger.info(
-        "Recording stop requested"
-    )
+    print("STOP RECORD FUNCTION")
+    logger.info("Recording stop requested")
 
     if not is_recording:
-
+        print("Recording was not active")
         return None
 
-    try:
+    current_stream = stream
 
-        if stream is not None:
+    # Immediately change state
+    is_recording = False
 
-            stream.stop()
-            stream.close()
+    with state.lock:
+        state.recording = False
 
-    except sd.PortAudioError as e:
 
-        print(
-            "Stream cleanup error:",
-            e
-        )
+    if current_stream:
 
-        logger.error(
-            f"Stream cleanup error: {e}"
-        )
+        try:
 
-    except OSError as e:
+            print("Stopping audio stream")
 
-        print(
-            "OS-level audio error:",
-            e
-        )
+            # abort immediately, don't wait for callbacks
+            current_stream.abort()
 
-        logger.error(
-            f"OS-level audio error: {e}"
-        )
+            print("Audio stream aborted")
 
-    finally:
 
-        stream = None
-        is_recording = False
+        except (sd.PortAudioError, OSError) as e:
+
+            logger.error(
+                f"Audio abort error: {e}"
+            )
+
+
+        try:
+
+            current_stream.close()
+
+            print("Audio stream closed")
+
+
+        except (sd.PortAudioError, OSError) as e:
+
+            logger.error(
+                f"Audio close error: {e}"
+            )
+
+
+    stream = None
+
 
     if len(recording) == 0:
 
-        print(
-            "No audio"
-        )
+        print("No audio")
 
         logger.warning(
             "Recording stopped but no audio was captured"
@@ -287,30 +294,19 @@ def stop_recording():
 
         return None
 
+
     audio = np.concatenate(
         recording,
         axis=0
     )
 
-    print(
-        "Recording finished"
-    )
+
+    print("Recording finished")
 
     logger.info(
         f"Recording finished, samples={audio.shape}"
     )
 
-    print(
-        "Audio samples:",
-        audio.shape
-    )
-
-    print(
-        "Max volume:",
-        np.max(
-            np.abs(audio)
-        )
-    )
 
     return audio
 

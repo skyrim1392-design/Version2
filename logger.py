@@ -51,3 +51,7 @@ def info(message):
 def error(message):
 
     app_logger.error(message)
+
+def warning(message):
+
+    app_logger.warning(message)    

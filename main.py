@@ -1,5 +1,6 @@
 import atexit
 import threading
+import time
 
 import keyboard
 
@@ -9,21 +10,28 @@ import text_output
 import tray
 import whisper_engine
 
+
 # ================= GLOBAL =================
 
 is_processing = False
 f8_active = False
 
 
+# ================= CLEANUP =================
+
 def cleanup():
 
     print("Cleaning up...")
 
     if audio.is_recording:
+
+        print("Stopping active recording")
+
         audio.stop_recording()
 
 
 atexit.register(cleanup)
+
 
 # ================= TRAY =================
 
@@ -47,7 +55,7 @@ def f8_down():
     f8_active = True
 
     if is_processing:
-        print("Ignoring F8: Whisper is processing")
+        print("Ignoring F8: already processing")
         return
 
     if audio.is_recording:
@@ -58,24 +66,66 @@ def f8_down():
     audio.start_recording()
 
 
+
 def f8_up():
 
     global is_processing
     global f8_active
 
-    f8_active = False
+    if not f8_active:
 
-    if not audio.is_recording:
+        print(
+            "Ignoring duplicate F8 release"
+        )
+
         return
 
-    print("F8 released")
+
+    f8_active = False
+
+
+    print(
+        "===== F8 RELEASE HANDLER ENTERED ====="
+    )
+
+
+    if is_processing:
+
+        print(
+            "Ignoring F8: already processing"
+        )
+
+        return
+
+
+    if not audio.is_recording:
+
+        print(
+            "No active recording"
+        )
+
+        return
+
+
+    print(
+        "F8 released"
+    )
+
 
     data = audio.stop_recording()
 
+
     if data is None:
+
+        print(
+            "No audio data"
+        )
+
         return
 
+
     is_processing = True
+
 
     try:
 
@@ -83,45 +133,130 @@ def f8_up():
 
         text = whisper_engine.whisper_transcribe()
 
+
     finally:
 
         is_processing = False
 
 
-    print("FINAL TEXT:")
-    print(repr(text))
+
+    print(
+        "FINAL TEXT:"
+    )
+
+    print(
+        repr(text)
+    )
+
 
     text_output.type_text(text)
 
 
 
-# ================= MAIN =================
+# ================= SAFE HANDLERS =================
 
-print("================================")
-print(" Windows Voice Assistant")
-logger.info("Voice Assistant started")
-print(" Press and hold F8 to speak")
-print(" Release F8 to transcribe")
-print("================================")
+def safe_f8_down(e):
+
+    try:
+
+        f8_down()
+
+
+    except Exception as error:
+
+        print(
+            "F8 press error:"
+        )
+
+        print(error)
+
+        logger.error(
+            f"F8 press error: {error}"
+        )
+
+
+
+def safe_f8_up(e):
+
+    try:
+
+        f8_up()
+
+
+    except Exception as error:
+
+        print(
+            "F8 release error:"
+        )
+
+        print(error)
+
+        logger.error(
+            f"F8 release error: {error}"
+        )
+
+
+
+# ================= START =================
+
+print(
+    "================================"
+)
+
+print(
+    " Windows Voice Assistant"
+)
+
+logger.info(
+    "Voice Assistant started"
+)
+
+print(
+    " Press and hold F8 to speak"
+)
+
+print(
+    " Release F8 to transcribe"
+)
+
+print(
+    "================================"
+)
+
 
 
 keyboard.on_press_key(
     "f8",
-    lambda e: f8_down()
+    safe_f8_down
 )
 
 
 keyboard.on_release_key(
     "f8",
-    lambda e: f8_up()
+    safe_f8_up
 )
 
 
+
+# ================= MAIN LOOP =================
+
 try:
 
-    keyboard.wait()
+    while True:
+
+        time.sleep(1)
+
 
 except KeyboardInterrupt:
 
-    logger.info("Voice Assistant stopped")
-    print("\nVoice assistant stopped.")
+    print(
+        "!!! KeyboardInterrupt detected !!!"
+    )
+
+    logger.info(
+        "Voice Assistant stopped"
+    )
+
+    print(
+        "\nVoice assistant stopped."
+    )

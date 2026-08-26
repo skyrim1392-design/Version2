@@ -1,5 +1,5 @@
 {
-    "model": "ggml-medium.bin",
+    "model": "ggml-small.bin",
     "language_mode": "ENGLISH",
     "task_mode": "TRANSCRIBE",
     "microphone": "Microphone (High Definition Audio Device)",

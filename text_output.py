@@ -1,30 +1,37 @@
+import threading
 import time
 
 import pyautogui
-import pyperclip
+
+typing_lock = threading.Lock()
 
 
 def type_text(text):
 
     print("TYPE FUNCTION RECEIVED:")
     print(repr(text))
-
+    print(
+    "TYPE THREAD:",
+    threading.current_thread().name
+)
 
     if not text:
-
         print("NO TEXT TO TYPE")
-
         return
 
+    with typing_lock:
 
-    pyperclip.copy(text)
+        print("START TYPING")
 
-    time.sleep(0.1)
+        pyautogui.keyUp("ctrl")
+        pyautogui.keyUp("shift")
+        pyautogui.keyUp("alt")
 
-    pyautogui.hotkey(
-        "ctrl",
-        "v"
-    )
+        time.sleep(0.1)
 
+        pyautogui.write(
+            text,
+            interval=0.03
+        )
 
-    print("TEXT PASTED")
+        print("TEXT TYPED")
