@@ -2,6 +2,7 @@ import os
 import threading
 import time
 import wave
+from datetime import datetime
 
 import numpy as np
 import sounddevice as sd
@@ -12,7 +13,14 @@ import logger
 from app_state import state
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-WAV_FILE = os.path.join(BASE_DIR, "temp", "record.wav")
+
+
+def create_wav_path():
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    filename = f"recording_{timestamp}.wav"
+
+    return os.path.join(BASE_DIR, "temp", filename)
+
 
 recording = []
 stream = None
@@ -20,6 +28,11 @@ is_recording = False
 microphone_monitor_thread = None
 microphone_monitor_stop = None
 MICROPHONE_CHECK_INTERVAL = 15.0
+
+
+def generate_recording_filename():
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    return f"recording_{timestamp}.wav"
 
 
 def classify_microphone_result(
@@ -178,13 +191,6 @@ def start_recording():
     microphone_index = find_microphone(mic_name)
     recording = []
 
-    if os.path.exists(WAV_FILE):
-        try:
-            os.remove(WAV_FILE)
-            logger.info("Old WAV removed before recording")
-        except OSError as error:
-            logger.warning(f"Could not remove old WAV: {error}")
-
     with state.lock:
         state.status = "RECORDING"
         state.recording = False
@@ -335,6 +341,7 @@ def stop_recording():
 
 
 def save_wav(audio):
+    wav_path = create_wav_path()
     current_config = config.load_config()
     audio_config = current_config.get("audio", {})
     input_sample_rate = audio_config.get("input_sample_rate", 44100)
@@ -350,11 +357,11 @@ def save_wav(audio):
     )
     audio_int16 = (audio * 32767).astype(np.int16)
 
-    with wave.open(WAV_FILE, "wb") as wf:
+    with wave.open(wav_path, "wb") as wf:
         wf.setnchannels(channels)
         wf.setsampwidth(2)
         wf.setframerate(whisper_sample_rate)
         wf.writeframes(audio_int16.tobytes())
 
-    logger.info(f"WAV saved: {WAV_FILE}")
-    return WAV_FILE
+    logger.info(f"WAV saved: {wav_path}")
+    return wav_path
