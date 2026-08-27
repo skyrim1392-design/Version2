@@ -8,7 +8,6 @@ import config
 import logger
 from app_state import state
 
-
 DIAGNOSTIC_DURATION = 1.0
 SIGNAL_PEAK_THRESHOLD = 1e-5
 SIGNAL_RMS_THRESHOLD = 1e-6
@@ -112,9 +111,13 @@ def run_microphone_test():
             state.microphone_connected = True
             state.microphone_level = peak
             state.microphone_diagnostic = result["status"]
-            state.microphone_error = None if signal_ok else (
-                "Microphone is visible and capture callbacks are arriving, "
-                "but no usable audio signal was detected."
+            state.microphone_error = (
+                None
+                if signal_ok
+                else (
+                    "Microphone is visible and capture callbacks are arriving, "
+                    "but no usable audio signal was detected."
+                )
             )
             state.last_microphone_check = time.time()
 

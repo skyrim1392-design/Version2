@@ -36,6 +36,7 @@ def create_icon(status):
 
 # ================= GPU =================
 
+
 def set_gpu(device):
     set_config_value("gpu_device", device)
     print(f"GPU changed to device {device}")
@@ -58,6 +59,7 @@ def is_gpu_intel(item):
 
 
 # ================= LANGUAGE =================
+
 
 def set_language(language):
     set_config_value("language_mode", language)
@@ -90,6 +92,7 @@ def is_language_persian(item):
 
 # ================= TASK =================
 
+
 def set_task(task):
     set_config_value("task_mode", task)
     print(f"Task changed to {task}")
@@ -113,6 +116,7 @@ def is_task_translate(item):
 
 # ================= MODEL =================
 
+
 def get_available_models():
     models_dir = os.path.join(BASE_DIR, "models")
 
@@ -120,7 +124,8 @@ def get_available_models():
         return []
 
     models = [
-        filename for filename in os.listdir(models_dir)
+        filename
+        for filename in os.listdir(models_dir)
         if filename.lower().endswith(".bin")
     ]
     models.sort()
@@ -141,10 +146,12 @@ def model_selected(icon, item):
 def is_model_selected(model):
     def check(item):
         return load_config().get("model", "") == model
+
     return check
 
 
 # ================= MICROPHONE DIAGNOSTICS =================
+
 
 def test_microphone(icon, item):
     """Run the explicit microphone test in a worker so the tray stays responsive."""
@@ -177,6 +184,7 @@ def test_microphone(icon, item):
 
 
 # ================= EXIT =================
+
 
 def exit_application(icon, item):
     print("Exiting Voice Assistant...")
@@ -230,7 +238,9 @@ def start_tray():
 
     task_menu = pystray.Menu(
         pystray.MenuItem("Transcribe", task_transcribe, checked=is_task_transcribe),
-        pystray.MenuItem("Translate to English", task_translate, checked=is_task_translate),
+        pystray.MenuItem(
+            "Translate to English", task_translate, checked=is_task_translate
+        ),
     )
 
     model_items = [

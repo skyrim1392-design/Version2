@@ -22,6 +22,24 @@ microphone_monitor_stop = None
 MICROPHONE_CHECK_INTERVAL = 15.0
 
 
+def classify_microphone_result(
+    callback_count, frame_count, callback_errors, peak_level, rms_level
+):
+    if callback_errors > 0:
+        return "STREAM_WARNING"
+
+    if callback_count == 0:
+        return "NO_AUDIO_CALLBACKS"
+
+    if frame_count == 0:
+        return "NO_AUDIO_FRAMES"
+
+    if peak_level <= 1e-5 and rms_level <= 1e-6:
+        return "NO_AUDIO_SIGNAL"
+
+    return "OK"
+
+
 def find_microphone(mic_name):
     devices = sd.query_devices()
 
@@ -103,10 +121,7 @@ def _microphone_monitor():
             logger.info(
                 "Microphone health: " + ("AVAILABLE" if available else "UNAVAILABLE")
             )
-            print(
-                "MICROPHONE HEALTH:",
-                "AVAILABLE" if available else "UNAVAILABLE"
-            )
+            print("MICROPHONE HEALTH:", "AVAILABLE" if available else "UNAVAILABLE")
             last_available = available
 
         microphone_monitor_stop.wait(MICROPHONE_CHECK_INTERVAL)
@@ -162,6 +177,13 @@ def start_recording():
 
     microphone_index = find_microphone(mic_name)
     recording = []
+
+    if os.path.exists(WAV_FILE):
+        try:
+            os.remove(WAV_FILE)
+            logger.info("Old WAV removed before recording")
+        except OSError as error:
+            logger.warning(f"Could not remove old WAV: {error}")
 
     with state.lock:
         state.status = "RECORDING"
@@ -267,19 +289,33 @@ def stop_recording():
         state.microphone_level = peak_level
         state.audio_zero_sample_ratio = zero_ratio
 
-    logger.info(
-        f"Recording diagnostics: callbacks={callback_count}, "
-        f"frames={frame_count}, callback_errors={callback_errors}, "
-        f"peak={peak_level:.8f}, rms={rms_level:.8f}, "
-        f"zero_ratio={zero_ratio:.6f}"
+    diagnosis = classify_microphone_result(
+        callback_count,
+        frame_count,
+        callback_errors,
+        peak_level,
+        rms_level,
     )
 
-    if peak_level <= 1e-5 or rms_level <= 1e-6:
+    logger.info(
+        "\n"
+        "MICROPHONE RECORDING DIAGNOSTIC\n"
+        "-------------------------------\n"
+        f"Callbacks: {callback_count}\n"
+        f"Frames: {frame_count}\n"
+        f"Callback errors: {callback_errors}\n"
+        f"Peak: {peak_level:.8f}\n"
+        f"RMS: {rms_level:.8f}\n"
+        f"Zero ratio: {zero_ratio:.6f}\n"
+        f"Diagnosis: {diagnosis}"
+    )
+
+    if diagnosis != "OK":
         with state.lock:
             state.status = "SUSPECT"
             state.microphone_connected = True
             state.microphone_available = True
-            state.microphone_diagnostic = "SUSPECT"
+            state.microphone_diagnostic = diagnosis
             state.microphone_error = (
                 "Microphone capture is active, but no usable audio signal was detected."
             )
@@ -305,9 +341,7 @@ def save_wav(audio):
     whisper_sample_rate = audio_config.get("whisper_sample_rate", 16000)
     channels = audio_config.get("channels", 1)
 
-    logger.info(
-        f"Resampling audio: {input_sample_rate} Hz -> {whisper_sample_rate} Hz"
-    )
+    logger.info(f"Resampling audio: {input_sample_rate} Hz -> {whisper_sample_rate} Hz")
 
     audio = resample_poly(
         audio.flatten(),

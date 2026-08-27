@@ -10,10 +10,7 @@ def type_text(text):
 
     print("TYPE FUNCTION RECEIVED:")
     print(repr(text))
-    print(
-    "TYPE THREAD:",
-    threading.current_thread().name
-)
+    print("TYPE THREAD:", threading.current_thread().name)
 
     if not text:
         print("NO TEXT TO TYPE")
@@ -29,9 +26,6 @@ def type_text(text):
 
         time.sleep(0.1)
 
-        pyautogui.write(
-            text,
-            interval=0.03
-        )
+        pyautogui.write(text, interval=0.03)
 
         print("TEXT TYPED")

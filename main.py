@@ -1,4 +1,5 @@
 import atexit
+import os
 import threading
 import time
 
@@ -18,6 +19,7 @@ f8_active = False
 
 
 # ================= CLEANUP =================
+
 
 def cleanup():
 
@@ -42,15 +44,13 @@ audio.start_microphone_monitor()
 
 # ================= TRAY =================
 
-tray_thread = threading.Thread(
-    target=tray.start_tray,
-    daemon=True
-)
+tray_thread = threading.Thread(target=tray.start_tray, daemon=True)
 
 tray_thread.start()
 
 
 # ================= F8 CONTROL =================
+
 
 def f8_down():
 
@@ -95,45 +95,31 @@ def f8_up():
     global is_processing
     global f8_active
 
+    text = ""
+
     if not f8_active:
 
-        print(
-            "Ignoring duplicate F8 release"
-        )
+        print("Ignoring duplicate F8 release")
 
         return
-
 
     f8_active = False
 
-
-    print(
-        "===== F8 RELEASE HANDLER ENTERED ====="
-    )
-
+    print("===== F8 RELEASE HANDLER ENTERED =====")
 
     if is_processing:
 
-        print(
-            "Ignoring F8: already processing"
-        )
+        print("Ignoring F8: already processing")
 
         return
-
 
     if not audio.is_recording:
 
-        print(
-            "No active recording"
-        )
+        print("No active recording")
 
         return
 
-
-    print(
-        "F8 released"
-    )
-
+    print("F8 released")
 
     data = audio.stop_recording()
     with state.lock:
@@ -150,54 +136,63 @@ def f8_up():
             if not state.error:
                 state.error = "No usable audio data was captured"
 
-        print(
-            "No usable audio data - transcription cancelled"
-        )
+        print("No usable audio data - transcription cancelled")
 
         logger.error(
             "Transcription cancelled because no usable microphone audio was captured"
         )
 
         return
-
-
     is_processing = True
 
-
     try:
-
-        audio.save_wav(data)
         with state.lock:
             state.status = "PROCESSING"
             state.processing = True
-        text = whisper_engine.whisper_transcribe()
 
-        print("STATE:", state.status)
+        wav_path = audio.save_wav(data)
 
+        if not os.path.exists(wav_path):
+            raise RuntimeError("WAV file was not created")
+
+        if os.path.getsize(wav_path) < 1000:
+            raise RuntimeError("WAV file is too small")
+
+        print("Running Whisper...")
+
+        text = whisper_engine.whisper_transcribe(wav_path)
+
+        print("Whisper finished")
+
+    except (OSError, RuntimeError, ValueError) as error:
+
+        print("PROCESSING ERROR:", error)
+        logger.error(f"Processing error: {error}")
+
+        with state.lock:
+            state.status = "ERROR"
+            state.error = str(error)
+
+        return
 
     finally:
+
         is_processing = False
 
         with state.lock:
-            state.status = "IDLE"
             state.processing = False
+            if state.status != "ERROR":
+                state.status = "IDLE"
 
+    print("FINAL TEXT:")
 
-
-    print(
-        "FINAL TEXT:"
-    )
-
-    print(
-        repr(text)
-    )
-
+    print(repr(text))
 
     text_output.type_text(text)
 
 
-
 # ================= SAFE HANDLERS =================
+
 
 def safe_f8_down(e):
 
@@ -205,19 +200,13 @@ def safe_f8_down(e):
 
         f8_down()
 
-
     except (OSError, RuntimeError) as error:
 
-        print(
-            "F8 press error:"
-        )
+        print("F8 press error:")
 
         print(error)
 
-        logger.error(
-            f"F8 press error: {error}"
-        )
-
+        logger.error(f"F8 press error: {error}")
 
 
 def safe_f8_up(e):
@@ -226,60 +215,34 @@ def safe_f8_up(e):
 
         f8_up()
 
-
     except (OSError, RuntimeError) as error:
 
-        print(
-            "F8 release error:"
-        )
+        print("F8 release error:")
 
         print(error)
 
-        logger.error(
-            f"F8 release error: {error}"
-        )
-
+        logger.error(f"F8 release error: {error}")
 
 
 # ================= START =================
 
-print(
-    "================================"
-)
+print("================================")
 
-print(
-    " Windows Voice Assistant"
-)
+print(" Windows Voice Assistant")
 
-logger.info(
-    "Voice Assistant started"
-)
+logger.info("Voice Assistant started")
 
-print(
-    " Press and hold F8 to speak"
-)
+print(" Press and hold F8 to speak")
 
-print(
-    " Release F8 to transcribe"
-)
+print(" Release F8 to transcribe")
 
-print(
-    "================================"
-)
+print("================================")
 
 
-
-keyboard.on_press_key(
-    "f8",
-    safe_f8_down
-)
+keyboard.on_press_key("f8", safe_f8_down)
 
 
-keyboard.on_release_key(
-    "f8",
-    safe_f8_up
-)
-
+keyboard.on_release_key("f8", safe_f8_up)
 
 
 # ================= MAIN LOOP =================
@@ -293,14 +256,8 @@ try:
 
 except KeyboardInterrupt:
 
-    print(
-        "!!! KeyboardInterrupt detected !!!"
-    )
+    print("!!! KeyboardInterrupt detected !!!")
 
-    logger.info(
-        "Voice Assistant stopped"
-    )
+    logger.info("Voice Assistant stopped")
 
-    print(
-        "\nVoice assistant stopped."
-    )
+    print("\nVoice assistant stopped.")

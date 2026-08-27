@@ -4,23 +4,15 @@ from logging.handlers import RotatingFileHandler
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-LOG_DIR = os.path.join(
-    BASE_DIR,
-    "logs"
-)
+LOG_DIR = os.path.join(BASE_DIR, "logs")
 
 os.makedirs(LOG_DIR, exist_ok=True)
 
 
-LOG_FILE = os.path.join(
-    LOG_DIR,
-    "assistant.log"
-)
+LOG_FILE = os.path.join(LOG_DIR, "assistant.log")
 
 
-app_logger = logging.getLogger(
-    "========== Voice Assistant Started =========="
-)
+app_logger = logging.getLogger("========== Voice Assistant Started ==========")
 
 app_logger.setLevel(logging.INFO)
 
@@ -28,15 +20,10 @@ app_logger.setLevel(logging.INFO)
 if not app_logger.handlers:
 
     file_handler = RotatingFileHandler(
-        LOG_FILE,
-        maxBytes=5 * 1024 * 1024,   # 5 MB
-        backupCount=3,
-        encoding="utf-8"
+        LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"  # 5 MB
     )
 
-    formatter = logging.Formatter(
-        "%(asctime)s | %(levelname)s | %(message)s"
-    )
+    formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
 
     file_handler.setFormatter(formatter)
 
@@ -52,6 +39,7 @@ def error(message):
 
     app_logger.error(message)
 
+
 def warning(message):
 
-    app_logger.warning(message)    
+    app_logger.warning(message)
