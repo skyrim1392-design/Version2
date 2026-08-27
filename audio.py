@@ -131,6 +131,7 @@ def audio_callback(indata, frames, time_info, status):
             np.max(np.abs(indata))
         )
 
+
 # ================= START RECORDING =================
 
 def start_recording():
@@ -186,6 +187,16 @@ def start_recording():
 
     recording = []
 
+    # Reset per-recording diagnostics before opening the stream.
+    with state.lock:
+        state.status = "RECORDING"
+        state.recording = False
+        state.processing = False
+        state.microphone_connected = False
+        state.microphone_level = 0.0
+        state.last_audio_samples = 0
+        state.error = None
+
     try:
 
         stream = sd.InputStream(
@@ -199,8 +210,16 @@ def start_recording():
         stream.start()
 
     except (sd.PortAudioError, OSError) as e:
+
         stream = None
         is_recording = False
+
+        with state.lock:
+            state.status = "ERROR"
+            state.recording = False
+            state.microphone_connected = False
+            state.microphone_level = 0.0
+            state.error = f"Microphone start failed: {e}"
 
         logger.error(
             f"Failed to start audio stream: {e}"
@@ -209,11 +228,14 @@ def start_recording():
         raise
 
     is_recording = True
+
     with state.lock:
 
+        state.status = "RECORDING"
         state.recording = True
         state.microphone_connected = True
         state.last_audio_samples = 0
+        state.microphone_level = 0.0
         state.error = None
 
     print(
@@ -247,7 +269,6 @@ def stop_recording():
     with state.lock:
         state.recording = False
 
-
     if current_stream:
 
         try:
@@ -259,13 +280,11 @@ def stop_recording():
 
             print("Audio stream aborted")
 
-
         except (sd.PortAudioError, OSError) as e:
 
             logger.error(
                 f"Audio abort error: {e}"
             )
-
 
         try:
 
@@ -273,18 +292,17 @@ def stop_recording():
 
             print("Audio stream closed")
 
-
         except (sd.PortAudioError, OSError) as e:
 
             logger.error(
                 f"Audio close error: {e}"
             )
 
-
     stream = None
 
     with state.lock:
         state.last_audio_samples = len(recording)
+
     if len(recording) == 0:
 
         print("No audio")
@@ -293,21 +311,67 @@ def stop_recording():
             "Recording stopped but no audio was captured"
         )
 
-        return None
+        with state.lock:
+            state.status = "ERROR"
+            state.microphone_connected = False
+            state.microphone_level = 0.0
+            state.error = "No audio was captured from the microphone"
 
+        return None
 
     audio = np.concatenate(
         recording,
         axis=0
     )
 
+    # A stream can remain open while delivering only zeros/silence.
+    # Do not send an empty/faulty microphone recording to Whisper.
+    peak_level = float(
+        np.max(np.abs(audio))
+    )
+
+    rms_level = float(
+        np.sqrt(np.mean(np.square(audio)))
+    )
+
+    with state.lock:
+        state.microphone_level = peak_level
+
+    # These are intentionally conservative diagnostics. Normal quiet
+    # speech should pass; completely zero/near-zero input is rejected.
+    silence_peak_threshold = 1e-5
+    silence_rms_threshold = 1e-6
+
+    if (
+        peak_level <= silence_peak_threshold
+        or rms_level <= silence_rms_threshold
+    ):
+
+        print(
+            "Microphone fault: no usable audio signal detected"
+        )
+
+        logger.error(
+            f"Microphone produced no usable audio: "
+            f"peak={peak_level:.8f}, rms={rms_level:.8f}"
+        )
+
+        with state.lock:
+            state.status = "ERROR"
+            state.microphone_connected = False
+            state.microphone_level = peak_level
+            state.error = (
+                "Microphone is not producing a usable audio signal"
+            )
+
+        return None
 
     print("Recording finished")
 
     logger.info(
-        f"Recording finished, samples={audio.shape}"
+        f"Recording finished, samples={audio.shape}, "
+        f"peak={peak_level:.8f}, rms={rms_level:.8f}"
     )
-
 
     return audio
 

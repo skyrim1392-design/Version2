@@ -63,12 +63,24 @@ def f8_down():
 
     print("F8 pressed")
 
-    audio.start_recording()
+    try:
+        audio.start_recording()
+    except (OSError, RuntimeError) as error:
+        with state.lock:
+            state.status = "ERROR"
+            state.recording = False
+            state.processing = False
+            state.error = str(error)
+
+        print("MICROPHONE ERROR:", error)
+        logger.error(f"Microphone error: {error}")
+        return
 
     with state.lock:
         state.status = "RECORDING"
         state.recording = True
-print("STATE:", state.status)
+
+    print("STATE:", state.status)
 
 
 def f8_up():
@@ -124,8 +136,19 @@ def f8_up():
 
     if data is None:
 
+        with state.lock:
+            state.status = "ERROR"
+            state.recording = False
+            state.processing = False
+            if not state.error:
+                state.error = "No usable audio data was captured"
+
         print(
-            "No audio data"
+            "No usable audio data - transcription cancelled"
+        )
+
+        logger.error(
+            "Transcription cancelled because no usable microphone audio was captured"
         )
 
         return
