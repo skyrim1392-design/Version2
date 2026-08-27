@@ -161,6 +161,7 @@ def f8_up():
         print("Running Whisper...")
 
         text = whisper_engine.whisper_transcribe(wav_path)
+        audio.cleanup_old_wavs()
 
         print("Whisper finished")
 

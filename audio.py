@@ -1,3 +1,4 @@
+import glob
 import os
 import threading
 import time
@@ -33,6 +34,22 @@ MICROPHONE_CHECK_INTERVAL = 15.0
 def generate_recording_filename():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     return f"recording_{timestamp}.wav"
+
+
+def cleanup_old_wavs(max_files=10):
+    temp_folder = os.path.join(BASE_DIR, "temp")
+
+    wav_files = glob.glob(os.path.join(temp_folder, "*.wav"))
+
+    wav_files.sort(key=os.path.getmtime, reverse=True)
+
+    for old_file in wav_files[max_files:]:
+        try:
+            os.remove(old_file)
+            logger.info(f"Deleted old WAV: {old_file}")
+
+        except Exception as e:
+            logger.warning(f"Could not delete old WAV {old_file}: {e}")
 
 
 def classify_microphone_result(
