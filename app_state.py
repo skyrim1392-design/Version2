@@ -25,6 +25,16 @@ class AppState:
 
         self.last_audio_samples = 0
 
+        self.audio_callback_count = 0
+
+        self.audio_callback_errors = 0
+
+        self.audio_frames_received = 0
+
+        self.audio_zero_sample_ratio = 0.0
+
+        self.microphone_diagnostic = "NOT_TESTED"
+
         self.error = None
 
 
