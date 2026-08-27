@@ -30,6 +30,11 @@ stream = None
 
 is_recording = False
 
+microphone_monitor_thread = None
+microphone_monitor_stop = None
+
+MICROPHONE_CHECK_INTERVAL = 3.0
+
 
 # ================= MICROPHONE =================
 
@@ -110,6 +115,124 @@ def find_microphone(mic_name):
     raise RuntimeError(
         f"Microphone not found: {mic_name}"
     )
+
+
+# ================= MICROPHONE HEALTH =================
+
+def check_microphone_available():
+
+    current_config = config.load_config()
+
+    mic_name = current_config.get(
+        "microphone",
+        "auto"
+    )
+
+    try:
+        microphone_index = find_microphone(
+            mic_name
+        )
+
+        device = sd.query_devices(
+            microphone_index
+        )
+
+        if device["max_input_channels"] <= 0:
+            raise RuntimeError(
+                f"Microphone has no input channels: {device['name']}"
+            )
+
+        # query_devices confirms that PortAudio/Windows currently exposes
+        # the device. We deliberately do not open a stream here because
+        # probing every few seconds should not disturb active recording.
+        with state.lock:
+            state.microphone_available = True
+            state.microphone_connected = True
+            state.microphone_error = None
+            state.last_microphone_check = __import__("time").time()
+
+        return True
+
+    except (OSError, RuntimeError, sd.PortAudioError) as error:
+
+        with state.lock:
+            state.microphone_available = False
+            state.microphone_connected = False
+            state.microphone_error = str(error)
+            state.last_microphone_check = __import__("time").time()
+
+            # Never overwrite an active recording/processing state.
+            if not state.recording and not state.processing:
+                state.status = "ERROR"
+                state.error = f"Microphone unavailable: {error}"
+
+        logger.error(
+            f"Microphone health check failed: {error}"
+        )
+
+        return False
+
+
+def _microphone_monitor():
+
+    logger.info(
+        "Microphone health monitor started"
+    )
+
+    last_available = None
+
+    while microphone_monitor_stop is not None and not microphone_monitor_stop.is_set():
+
+        available = check_microphone_available()
+
+        if available != last_available:
+
+            if available:
+                print("MICROPHONE HEALTH: AVAILABLE")
+                logger.info("Microphone is available")
+            else:
+                print("MICROPHONE HEALTH: UNAVAILABLE")
+                logger.error("Microphone is unavailable")
+
+            last_available = available
+
+        microphone_monitor_stop.wait(
+            MICROPHONE_CHECK_INTERVAL
+        )
+
+    logger.info(
+        "Microphone health monitor stopped"
+    )
+
+
+def start_microphone_monitor():
+
+    global microphone_monitor_thread
+    global microphone_monitor_stop
+
+    if (
+        microphone_monitor_thread is not None
+        and microphone_monitor_thread.is_alive()
+    ):
+        return
+
+    microphone_monitor_stop = __import__("threading").Event()
+
+    microphone_monitor_thread = __import__("threading").Thread(
+        target=_microphone_monitor,
+        name="MicrophoneHealthMonitor",
+        daemon=True
+    )
+
+    microphone_monitor_thread.start()
+
+
+def stop_microphone_monitor():
+
+    global microphone_monitor_stop
+
+    if microphone_monitor_stop is not None:
+        microphone_monitor_stop.set()
 
 
 # ================= AUDIO CALLBACK =================
@@ -234,8 +357,10 @@ def start_recording():
         state.status = "RECORDING"
         state.recording = True
         state.microphone_connected = True
-        state.last_audio_samples = 0
+        state.microphone_available = True
         state.microphone_level = 0.0
+        state.microphone_error = None
+        state.last_audio_samples = 0
         state.error = None
 
     print(
