@@ -23,6 +23,8 @@ def cleanup():
 
     print("Cleaning up...")
 
+    audio.stop_microphone_monitor()
+
     if audio.is_recording:
 
         print("Stopping active recording")
@@ -31,6 +33,11 @@ def cleanup():
 
 
 atexit.register(cleanup)
+
+
+# ================= MICROPHONE HEALTH MONITOR =================
+
+audio.start_microphone_monitor()
 
 
 # ================= TRAY =================
