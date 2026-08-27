@@ -1,5 +1,7 @@
 import os
 import wave
+import threading
+import time
 
 import numpy as np
 import sounddevice as sd
@@ -33,7 +35,7 @@ is_recording = False
 microphone_monitor_thread = None
 microphone_monitor_stop = None
 
-MICROPHONE_CHECK_INTERVAL = 3.0
+MICROPHONE_CHECK_INTERVAL = 15.0
 
 
 # ================= MICROPHONE =================
@@ -149,7 +151,7 @@ def check_microphone_available():
             state.microphone_available = True
             state.microphone_connected = True
             state.microphone_error = None
-            state.last_microphone_check = __import__("time").time()
+            state.last_microphone_check = time.time()
 
         return True
 
@@ -159,7 +161,7 @@ def check_microphone_available():
             state.microphone_available = False
             state.microphone_connected = False
             state.microphone_error = str(error)
-            state.last_microphone_check = __import__("time").time()
+            state.last_microphone_check = time.time()
 
             # Never overwrite an active recording/processing state.
             if not state.recording and not state.processing:
@@ -216,9 +218,9 @@ def start_microphone_monitor():
     ):
         return
 
-    microphone_monitor_stop = __import__("threading").Event()
+    microphone_monitor_stop = threading.Event()
 
-    microphone_monitor_thread = __import__("threading").Thread(
+    microphone_monitor_thread = threading.Thread(
         target=_microphone_monitor,
         name="MicrophoneHealthMonitor",
         daemon=True
