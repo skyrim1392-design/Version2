@@ -15,7 +15,13 @@ class AppState:
 
         self.microphone_connected = False
 
+        self.microphone_available = False
+
         self.microphone_level = 0.0
+
+        self.microphone_error = None
+
+        self.last_microphone_check = 0.0
 
         self.last_audio_samples = 0
 
