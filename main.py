@@ -86,13 +86,16 @@ def f8_down():
             state.status = "IDLE"
             state.recording = False
             state.processing = False
-            state.microphone_connected = False
-            state.microphone_available = False
-            state.microphone_level = 0.0
+            state.error = (
+                "Microphone unavailable. "
+                "Check your microphone connection and restart Voice Assistant."
+            )
 
-        show_microphone_warning(f"Microphone unavailable: {error}")
+            print("⚠️ Microphone unavailable")
+            print("⚠️ Check your microphone connection and restart Voice Assistant.")
+            logger.error(f"Microphone unavailable: {error}")
 
-        return
+    return
 
     if not started:
         show_microphone_warning("Microphone unavailable")

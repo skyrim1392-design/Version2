@@ -16,6 +16,40 @@ from app_state import state
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+def reset_audio_state():
+
+    global stream, recording, is_recording
+
+    logger.info("Resetting audio state")
+
+    is_recording = False
+
+    recording.clear()
+
+    if stream:
+        try:
+            stream.abort()
+        except Exception:
+            pass
+
+        try:
+            stream.close()
+        except Exception:
+            pass
+
+        stream = None
+
+        with state.lock:
+            state.recording = False
+            state.status = "IDLE"
+
+            state.audio_callback_count = 0
+            state.audio_callback_errors = 0
+            state.audio_frames_received = 0
+            state.last_audio_samples = 0
+            state.microphone_level = 0.0
+
+
 def create_wav_path():
     timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
     filename = f"recording_{timestamp}.wav"
@@ -259,8 +293,24 @@ def start_recording():
         stream.start()
 
     except (sd.PortAudioError, OSError) as e:
-        stream = None
-        is_recording = False
+        logger.warning(f"Microphone open failed: {e}")
+
+        reset_audio_state()
+
+        with state.lock:
+            state.status = "IDLE"
+            state.recording = False
+            state.processing = False
+
+            state.microphone_connected = False
+            state.microphone_available = False
+            state.microphone_error = str(e)
+
+            state.error = f"Microphone unavailable: {e}"
+
+        logger.warning("Microphone state fully reset")
+
+        return False
 
         with state.lock:
             state.status = "IDLE"
@@ -297,6 +347,8 @@ def stop_recording():
     logger.info("Recording stop requested")
 
     if not is_recording:
+        logger.info("No active recording, forcing cleanup")
+        reset_audio_state()
         return None
 
     current_stream = stream
@@ -311,14 +363,16 @@ def stop_recording():
 
     if current_stream:
         try:
-            current_stream.abort()
+            current_stream.stop()
         except (sd.PortAudioError, OSError) as error:
-            logger.error(f"Audio abort error: {error}")
+            logger.error(f"Audio stop error: {error}")
 
-        try:
-            current_stream.close()
-        except (sd.PortAudioError, OSError) as error:
-            logger.error(f"Audio close error: {error}")
+    time.sleep(0.1)
+
+    try:
+        current_stream.close()
+    except (sd.PortAudioError, OSError) as error:
+        logger.error(f"Audio close error: {error}")
 
     stream = None
 
@@ -346,7 +400,7 @@ def stop_recording():
     # -------------------------------------------------
     # BUILD AUDIO
     # -------------------------------------------------
-
+    logger.info(f"STOP AUDIO BUFFER: chunks={len(recording)}")
     try:
         audio = np.concatenate(recording, axis=0)
 
@@ -397,6 +451,7 @@ def stop_recording():
 
     if diagnosis != "OK":
         with state.lock:
+            state.status = "IDLE"
             state.microphone_diagnostic = diagnosis
             state.microphone_error = "Microphone produced no usable audio signal."
             state.error = state.microphone_error
