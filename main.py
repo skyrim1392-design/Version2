@@ -83,7 +83,7 @@ def f8_down():
 
     except (OSError, RuntimeError) as error:
         with state.lock:
-            state.status = "IDLE"
+            state.status = "ERROR"
             state.recording = False
             state.processing = False
             state.error = (
@@ -98,7 +98,7 @@ def f8_down():
     return
 
     if not started:
-        show_microphone_warning("Microphone unavailable")
+        tray.show_microphone_error()
 
         return
 

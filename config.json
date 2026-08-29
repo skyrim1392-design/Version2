@@ -1,6 +1,6 @@
 {
     "model": "ggml-base.bin",
-    "language_mode": "ENGLISH",
+    "language_mode": "AUTO",
     "task_mode": "TRANSCRIBE",
     "microphone": "Microphone (High Definition Audio Device)",
     "push_key": "f8",

@@ -29,13 +29,13 @@ def reset_audio_state():
     if stream:
         try:
             stream.abort()
-        except Exception:
-            pass
+        except (RuntimeError, OSError) as exc:
+            logger.exception("Error aborting stream: %s", exc)
 
         try:
             stream.close()
-        except Exception:
-            pass
+        except (RuntimeError, OSError) as exc:
+            logger.exception("Error closing stream: %s", exc)
 
         stream = None
 
@@ -177,7 +177,7 @@ def check_microphone_present():
             state.last_microphone_check = time.time()
 
             if not state.recording and not state.processing:
-                state.status = "IDLE"
+                state.status = "ERROR"
                 state.error = f"Microphone unavailable: {error}"
 
         logger.error(f"Microphone health check failed: {error}")
@@ -298,7 +298,7 @@ def start_recording():
         reset_audio_state()
 
         with state.lock:
-            state.status = "IDLE"
+            state.status = "ERROR"
             state.recording = False
             state.processing = False
 
@@ -313,7 +313,7 @@ def start_recording():
         return False
 
         with state.lock:
-            state.status = "IDLE"
+            state.status = "ERROR"
             state.recording = False
             state.processing = False
             state.microphone_connected = False
@@ -451,7 +451,7 @@ def stop_recording():
 
     if diagnosis != "OK":
         with state.lock:
-            state.status = "IDLE"
+            state.status = "ERROR"
             state.microphone_diagnostic = diagnosis
             state.microphone_error = "Microphone produced no usable audio signal."
             state.error = state.microphone_error

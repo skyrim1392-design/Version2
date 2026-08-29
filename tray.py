@@ -19,6 +19,7 @@ tray_icon = None
 warning_until = 0.0
 warning_message = None
 warning_lock = threading.Lock()
+microphone_error = False
 
 
 def show_warning(message, duration=3.0):
@@ -207,6 +208,21 @@ def test_microphone(icon, item):
     ).start()
 
 
+def show_microphone_error():
+    global microphone_error
+
+    if microphone_error:
+        return
+
+    microphone_error = True
+
+    if tray_icon:
+        tray_icon.notify(
+            "Check your microphone connection and restart Voice Assistant.",
+            "Microphone unavailable",
+        )
+
+
 # ================= EXIT =================
 
 
@@ -272,7 +288,10 @@ def update_tray(icon):
             last_status = current_status
 
         if current_status == "ERROR":
-            icon.title = "Voice Assistant - Error"
+            icon.title = (
+                "Voice Assistant - Microphone unavailable.\n"
+                "Check microphone and restart the app."
+            )
 
         else:
             icon.title = "Voice Assistant - " + current_status
