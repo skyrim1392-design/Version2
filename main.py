@@ -12,10 +12,26 @@ import tray
 import whisper_engine
 from app_state import state
 
+print("AUDIO MODULE:", audio.__file__)
+logger.info(f"AUDIO MODULE: {audio.__file__}")
+
 # ================= GLOBAL =================
 
 is_processing = False
 f8_active = False
+
+
+WARNING_DURATION = 3.0
+
+
+def show_microphone_warning(message):
+    print("⚠️", message)
+    logger.warning(message)
+
+    tray.show_warning(
+        message,
+        duration=WARNING_DURATION,
+    )
 
 
 # ================= CLEANUP =================
@@ -25,21 +41,13 @@ def cleanup():
 
     print("Cleaning up...")
 
-    audio.stop_microphone_monitor()
-
     if audio.is_recording:
-
         print("Stopping active recording")
 
         audio.stop_recording()
 
 
 atexit.register(cleanup)
-
-
-# ================= MICROPHONE HEALTH MONITOR =================
-
-audio.start_microphone_monitor()
 
 
 # ================= TRAY =================
@@ -59,8 +67,6 @@ def f8_down():
     if f8_active:
         return
 
-    f8_active = True
-
     if is_processing:
         print("Ignoring F8: already processing")
         return
@@ -68,26 +74,38 @@ def f8_down():
     if audio.is_recording:
         return
 
+    f8_active = True
+
     print("F8 pressed")
 
     try:
-        audio.start_recording()
+        started = audio.start_recording()
+
     except (OSError, RuntimeError) as error:
         with state.lock:
-            state.status = "ERROR"
+            state.status = "IDLE"
             state.recording = False
             state.processing = False
-            state.error = str(error)
+            state.microphone_connected = False
+            state.microphone_available = False
+            state.microphone_level = 0.0
 
-        print("MICROPHONE ERROR:", error)
-        logger.error(f"Microphone error: {error}")
+        show_microphone_warning(f"Microphone unavailable: {error}")
+
         return
+
+    if not started:
+        show_microphone_warning("Microphone unavailable")
+
+        return
+
+    print("STATE: RECORDING")
 
     with state.lock:
         state.status = "RECORDING"
         state.recording = True
 
-    print("STATE:", state.status)
+        print("STATE:", state.status)
 
 
 def f8_up():
@@ -95,10 +113,7 @@ def f8_up():
     global is_processing
     global f8_active
 
-    text = ""
-
     if not f8_active:
-
         print("Ignoring duplicate F8 release")
 
         return
@@ -108,13 +123,11 @@ def f8_up():
     print("===== F8 RELEASE HANDLER ENTERED =====")
 
     if is_processing:
-
         print("Ignoring F8: already processing")
 
         return
 
     if not audio.is_recording:
-
         print("No active recording")
 
         return
@@ -128,21 +141,16 @@ def f8_up():
     print("STATE:", state.status)
 
     if data is None:
+        show_microphone_warning("No usable audio was captured from the microphone.")
 
-        with state.lock:
-            state.status = "ERROR"
-            state.recording = False
-            state.processing = False
-            if not state.error:
-                state.error = "No usable audio data was captured"
+        print("No usable audio - transcription cancelled")
 
-        print("No usable audio data - transcription cancelled")
-
-        logger.error(
+        logger.warning(
             "Transcription cancelled because no usable microphone audio was captured"
         )
 
         return
+
     is_processing = True
 
     try:
@@ -166,24 +174,21 @@ def f8_up():
         print("Whisper finished")
 
     except (OSError, RuntimeError, ValueError) as error:
-
         print("PROCESSING ERROR:", error)
         logger.error(f"Processing error: {error}")
 
         with state.lock:
-            state.status = "ERROR"
-            state.error = str(error)
+            state.status = "IDL"
 
         return
 
     finally:
-
         is_processing = False
 
         with state.lock:
             state.processing = False
-            if state.status != "ERROR":
-                state.status = "IDLE"
+
+            state.status = "IDLE"
 
     print("FINAL TEXT:")
 
@@ -198,11 +203,9 @@ def f8_up():
 def safe_f8_down(e):
 
     try:
-
         f8_down()
 
     except (OSError, RuntimeError) as error:
-
         print("F8 press error:")
 
         print(error)
@@ -213,11 +216,9 @@ def safe_f8_down(e):
 def safe_f8_up(e):
 
     try:
-
         f8_up()
 
     except (OSError, RuntimeError) as error:
-
         print("F8 release error:")
 
         print(error)
@@ -249,14 +250,11 @@ keyboard.on_release_key("f8", safe_f8_up)
 # ================= MAIN LOOP =================
 
 try:
-
     while True:
-
         time.sleep(1)
 
 
 except KeyboardInterrupt:
-
     print("!!! KeyboardInterrupt detected !!!")
 
     logger.info("Voice Assistant stopped")

@@ -5,13 +5,36 @@ import time
 import pystray
 from PIL import Image
 
+import microphone_diagnostics
 from app_state import state
 from config import load_config, set_config_value
-import microphone_diagnostics
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 ICON_DIR = os.path.join(BASE_DIR, "icons")
+
+# ================= TEMPORARY WARNING =================
+
+tray_icon = None
+warning_until = 0.0
+warning_message = None
+warning_lock = threading.Lock()
+
+
+def show_warning(message, duration=3.0):
+    """
+    Show a temporary microphone warning in the tray.
+
+    This is UI-only.
+    It does NOT modify application state.status.
+    """
+    global warning_until, warning_message
+
+    print("⚠️", message)
+
+    with warning_lock:
+        warning_message = message
+        warning_until = time.monotonic() + duration
 
 
 def create_icon(status):
@@ -19,6 +42,7 @@ def create_icon(status):
         "IDLE": "idle.png",
         "RECORDING": "recording.png",
         "PROCESSING": "processing.png",
+        "WARNING": "error.png",
         "ERROR": "error.png",
         # Use the existing error icon until a dedicated suspect icon is designed.
         "SUSPECT": "error.png",
@@ -193,31 +217,66 @@ def exit_application(icon, item):
 
 # ================= STATUS =================
 def update_tray(icon):
+    global tray_icon
+
+    tray_icon = icon
+
     last_status = None
-    last_error = None
+    warning_active = False
 
     while True:
         with state.lock:
             current_status = state.status
-            current_error = state.error
-            microphone_available = state.microphone_available
-            microphone_diagnostic = state.microphone_diagnostic
+
+        with warning_lock:
+            current_warning_until = warning_until
+            current_warning_message = warning_message
+
+        now = time.monotonic()
+
+        # -------------------------------------------------
+        # TEMPORARY WARNING
+        # -------------------------------------------------
+
+        if now < current_warning_until:
+            if not warning_active:
+                print("TRAY WARNING: Microphone unavailable")
+
+                icon.icon = create_icon("WARNING")
+                icon.title = "Voice Assistant - " + str(current_warning_message)
+
+                warning_active = True
+
+            time.sleep(0.1)
+            continue
+
+        # -------------------------------------------------
+        # WARNING FINISHED
+        # -------------------------------------------------
+
+        if warning_active:
+            print("TRAY WARNING FINISHED")
+
+            warning_active = False
+            last_status = None
+
+        # -------------------------------------------------
+        # NORMAL APPLICATION STATUS
+        # -------------------------------------------------
 
         if current_status != last_status:
             print("TRAY STATUS:", current_status)
+
             icon.icon = create_icon(current_status)
+
             last_status = current_status
 
-        if current_status == "ERROR" and not microphone_available:
-            icon.title = "Voice Assistant - Microphone unavailable"
-        elif current_status == "SUSPECT":
-            icon.title = "Voice Assistant - Microphone signal problem"
-        elif microphone_diagnostic == "SUSPECT":
-            icon.title = "Voice Assistant - Microphone signal problem"
+        if current_status == "ERROR":
+            icon.title = "Voice Assistant - Error"
+
         else:
             icon.title = "Voice Assistant - " + current_status
 
-        last_error = current_error
         time.sleep(0.5)
 
 

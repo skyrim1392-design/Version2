@@ -2,7 +2,6 @@ import threading
 
 
 class AppState:
-
     def __init__(self):
 
         self.lock = threading.Lock()
@@ -15,8 +14,7 @@ class AppState:
 
         self.microphone_connected = False
 
-        self.microphone_available = False
-
+        self.microphone_available = None
         self.microphone_level = 0.0
 
         self.microphone_error = None
