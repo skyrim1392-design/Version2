@@ -18,7 +18,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def reset_audio_state():
 
-    global stream, recording, is_recording
+    global stream, is_recording
 
     logger.info("Resetting audio state")
 

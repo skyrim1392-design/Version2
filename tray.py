@@ -211,16 +211,30 @@ def test_microphone(icon, item):
 def show_microphone_error():
     global microphone_error
 
-    if microphone_error:
-        return
-
     microphone_error = True
 
     if tray_icon:
+        tray_icon.icon = create_icon("ERROR")
+        tray_icon.title = (
+            "Voice Assistant - Microphone unavailable.\n"
+            "Check microphone and restart the app."
+        )
+
         tray_icon.notify(
             "Check your microphone connection and restart Voice Assistant.",
             "Microphone unavailable",
         )
+
+
+def clear_microphone_error():
+    global microphone_error
+
+    if not microphone_error:
+        return
+
+    microphone_error = False
+
+    print("TRAY: Microphone recovered")
 
 
 # ================= EXIT =================
@@ -251,6 +265,28 @@ def update_tray(icon):
         now = time.monotonic()
 
         # -------------------------------------------------
+        # PERSISTENT MICROPHONE ERROR
+        # -------------------------------------------------
+
+        if microphone_error:
+            if icon.icon is None or last_status != "MICROPHONE_ERROR":
+                print("TRAY STATUS: MICROPHONE_ERROR")
+
+                icon.icon = create_icon("ERROR")
+
+                icon.title = (
+                    "Voice Assistant - Microphone unavailable.\n"
+                    "Check microphone and restart the app."
+                )
+
+                last_status = "MICROPHONE_ERROR"
+
+            # Temporary warning notification may still run,
+            # but the tray icon remains ERROR.
+            time.sleep(0.5)
+            continue
+
+        # -------------------------------------------------
         # TEMPORARY WARNING
         # -------------------------------------------------
 
@@ -259,6 +295,7 @@ def update_tray(icon):
                 print("TRAY WARNING: Microphone unavailable")
 
                 icon.icon = create_icon("WARNING")
+
                 icon.title = "Voice Assistant - " + str(current_warning_message)
 
                 warning_active = True
@@ -287,14 +324,7 @@ def update_tray(icon):
 
             last_status = current_status
 
-        if current_status == "ERROR":
-            icon.title = (
-                "Voice Assistant - Microphone unavailable.\n"
-                "Check microphone and restart the app."
-            )
-
-        else:
-            icon.title = "Voice Assistant - " + current_status
+        icon.title = "Voice Assistant - " + current_status
 
         time.sleep(0.5)
 

@@ -74,6 +74,8 @@ def f8_down():
     if audio.is_recording:
         return
 
+    # Lock this physical F8 press.
+    # It remains locked until F8 is released.
     f8_active = True
 
     print("F8 pressed")
@@ -82,27 +84,35 @@ def f8_down():
         started = audio.start_recording()
 
     except (OSError, RuntimeError) as error:
+        print("⚠️ Microphone unavailable")
+        logger.error(f"Microphone unavailable: {error}")
+
+        tray.show_microphone_error()
+
         with state.lock:
-            state.status = "ERROR"
             state.recording = False
             state.processing = False
-            state.error = (
-                "Microphone unavailable. "
-                "Check your microphone connection and restart Voice Assistant."
-            )
-
-            print("⚠️ Microphone unavailable")
-            print("⚠️ Check your microphone connection and restart Voice Assistant.")
-            logger.error(f"Microphone unavailable: {error}")
-
-    return
-
-    if not started:
-        tray.show_microphone_error()
 
         return
 
-    print("STATE: RECORDING")
+    if not started:
+        print("⚠️ Microphone unavailable")
+
+        logger.warning("Microphone unavailable: audio.start_recording() returned False")
+
+        tray.show_microphone_error()
+
+        with state.lock:
+            state.recording = False
+            state.processing = False
+
+        return
+
+    # -------------------------------------------------
+    # MICROPHONE STARTED SUCCESSFULLY
+    # -------------------------------------------------
+
+    tray.clear_microphone_error()
 
     with state.lock:
         state.status = "RECORDING"
