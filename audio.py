@@ -268,7 +268,6 @@ def start_recording():
 
     with state.lock:
         state.status = "RECORDING"
-        state.recording = False
         state.processing = False
         state.microphone_connected = True
         state.microphone_available = True
