@@ -17,7 +17,6 @@ logger.info(f"AUDIO MODULE: {audio.__file__}")
 
 # ================= GLOBAL =================
 
-is_processing = False
 f8_active = False
 
 
@@ -67,7 +66,7 @@ def f8_down():
     if f8_active:
         return
 
-    if is_processing:
+    if state.processing:
         print("Ignoring F8: already processing")
         return
 
@@ -123,7 +122,6 @@ def f8_down():
 
 def f8_up():
 
-    global is_processing
     global f8_active
 
     if not f8_active:
@@ -135,7 +133,7 @@ def f8_up():
 
     print("===== F8 RELEASE HANDLER ENTERED =====")
 
-    if is_processing:
+    if state.processing:
         print("Ignoring F8: already processing")
 
         return
@@ -164,8 +162,6 @@ def f8_up():
 
         return
 
-    is_processing = True
-
     try:
         with state.lock:
             state.status = "PROCESSING"
@@ -191,13 +187,11 @@ def f8_up():
         logger.error(f"Processing error: {error}")
 
         with state.lock:
-            state.status = "IDL"
+            state.status = "IDLE"
 
         return
 
     finally:
-        is_processing = False
-
         with state.lock:
             state.processing = False
 
