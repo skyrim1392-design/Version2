@@ -7,6 +7,7 @@ import keyboard
 
 import audio
 import logger
+import runtime_validation
 import text_output
 import tray
 import whisper_engine
@@ -248,10 +249,11 @@ print(" Release F8 to transcribe")
 print("================================")
 
 
-keyboard.on_press_key("f8", safe_f8_down)
-
-
-keyboard.on_release_key("f8", safe_f8_up)
+if runtime_validation.run_startup_validation():
+    keyboard.on_press_key("f8", safe_f8_down)
+    keyboard.on_release_key("f8", safe_f8_up)
+else:
+    logger.error("Startup validation failed; F8 hotkey not registered")
 
 
 # ================= MAIN LOOP =================
