@@ -147,9 +147,17 @@ def f8_up():
 
     logger.info("F8 released")
 
-    data = audio.stop_recording()
+    try:
+        data = audio.stop_recording()
+
+    except (OSError, RuntimeError) as error:
+        logger.error(f"Recording stop failed: {error}")
+
+        data = None
+
     with state.lock:
         state.recording = False
+        state.status = "IDLE"
 
     logger.info(f"State: {state.status}")
 
