@@ -4,7 +4,7 @@ import time
 
 import logger
 from config import load_config
-from hardware import WHISPER_PATH, select_backend
+from hardware import select_backend
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -39,9 +39,13 @@ def whisper_transcribe(wav_path):
         logger.error(f"WAV too small: {wav_path}")
         raise RuntimeError("WAV file is too small")
 
-    if not os.path.isfile(WHISPER_PATH):
-        logger.error(f"Whisper executable missing: {WHISPER_PATH}")
-        raise RuntimeError(f"Whisper executable not found: {WHISPER_PATH}")
+    backend_spec = select_backend()
+
+    if not os.path.isfile(backend_spec["executable"]):
+        logger.error(f"Whisper executable missing: {backend_spec['executable']}")
+        raise RuntimeError(
+            f"Whisper executable not found: {backend_spec['executable']}"
+        )
 
     cancel_requested = False
 
@@ -58,21 +62,17 @@ def whisper_transcribe(wav_path):
 
     threads = str(config.get("threads", 8))
 
-    backend = select_backend()
-    backend_name = backend["backend"]
-    gpu_device = backend["device"]
-
     logger.info(
         f"Whisper config: model={model_name}, "
         f"language={language_mode}, "
         f"task={task_mode}, "
         f"threads={threads}, "
-        f"backend={backend_name}, "
-        f"gpu={gpu_device}"
+        f"backend={backend_spec['backend']}, "
+        f"gpu={backend_spec['device']}"
     )
 
     cmd = [
-        WHISPER_PATH,
+        backend_spec["executable"],
         "-m",
         model_path,
         "-f",
@@ -84,12 +84,7 @@ def whisper_transcribe(wav_path):
         "0",
     ]
 
-    if backend_name == "VULKAN":
-        cmd.extend(["-dev", str(gpu_device)])
-    elif backend_name == "CPU":
-        cmd.append("--no-gpu")
-    else:
-        raise RuntimeError(f"Unsupported Whisper backend: {backend_name}")
+    cmd.extend(backend_spec["device_args"])
 
     language = get_whisper_language(language_mode)
     if language:
@@ -114,7 +109,8 @@ def whisper_transcribe(wav_path):
         except FileNotFoundError as error:
             logger.error(f"Whisper executable could not be started: {error}")
             raise RuntimeError(
-                f"Whisper executable could not be started: {WHISPER_PATH}"
+                f"Whisper executable could not be started: "
+                f"{backend_spec['executable']}"
             ) from error
 
         whisper_process = process

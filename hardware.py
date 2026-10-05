@@ -128,9 +128,27 @@ def resolve_vulkan_device(devices, requested_device):
     return selected_device
 
 
+def _cpu_backend_spec():
+    """Backend specification for running Whisper on the CPU."""
+
+    return {
+        "backend": "CPU",
+        "device": None,
+        "executable": WHISPER_PATH,
+        "device_args": ["--no-gpu"],
+    }
+
+
 def select_backend():
     """
     Select the Whisper backend and device from configuration.
+
+    Returns:
+        dict: Backend specification used to build the Whisper command line.
+            backend      - "CPU" or "VULKAN"
+            device       - Vulkan device id, or None for CPU
+            executable   - Whisper executable to launch
+            device_args  - backend-specific command line arguments
 
     CPU:
         Always use CPU.
@@ -149,10 +167,7 @@ def select_backend():
 
     if backend == "CPU":
         logger.info("Whisper backend selected: CPU")
-        return {
-            "backend": "CPU",
-            "device": None,
-        }
+        return _cpu_backend_spec()
 
     if backend not in SUPPORTED_BACKENDS:
         raise RuntimeError(
@@ -171,10 +186,7 @@ def select_backend():
 
         logger.info("Whisper backend AUTO selected: CPU (no Vulkan device found)")
 
-        return {
-            "backend": "CPU",
-            "device": None,
-        }
+        return _cpu_backend_spec()
 
     try:
         selected_device = resolve_vulkan_device(devices, requested_device)
@@ -184,10 +196,7 @@ def select_backend():
 
         logger.warning(f"Whisper backend AUTO fell back to CPU: {error}")
 
-        return {
-            "backend": "CPU",
-            "device": None,
-        }
+        return _cpu_backend_spec()
 
     logger.info(
         f"Whisper backend selected: {backend} -> VULKAN, device={selected_device}"
@@ -196,4 +205,6 @@ def select_backend():
     return {
         "backend": "VULKAN",
         "device": selected_device,
+        "executable": WHISPER_PATH,
+        "device_args": ["-dev", str(selected_device)],
     }

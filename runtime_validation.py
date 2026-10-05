@@ -2,7 +2,7 @@ import os
 
 import logger
 from config import load_config
-from hardware import WHISPER_PATH, select_backend
+from hardware import select_backend
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -25,18 +25,19 @@ def run_startup_validation():
                 f"Whisper model not found: {model_path}"
             )
 
-        if not os.path.isfile(WHISPER_PATH):
-            raise RuntimeError(
-                f"Whisper executable not found: {WHISPER_PATH}"
-            )
+        backend_spec = select_backend()
 
-        backend = select_backend()
+        if not os.path.isfile(backend_spec["executable"]):
+            raise RuntimeError(
+                f"Whisper executable not found: {backend_spec['executable']}"
+            )
 
         logger.info(
             f"Startup validation successful: "
             f"model={model_name}, "
-            f"backend={backend['backend']}, "
-            f"device={backend['device']}"
+            f"backend={backend_spec['backend']}, "
+            f"device={backend_spec['device']}, "
+            f"executable={backend_spec['executable']}"
         )
 
         return True
