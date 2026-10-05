@@ -30,12 +30,12 @@ def reset_audio_state():
         try:
             stream.abort()
         except (RuntimeError, OSError) as exc:
-            logger.exception("Error aborting stream: %s", exc)
+            logger.error(f"Error aborting stream: {exc}")
 
         try:
             stream.close()
         except (RuntimeError, OSError) as exc:
-            logger.exception("Error closing stream: %s", exc)
+            logger.error(f"Error closing stream: {exc}")
 
         stream = None
 
