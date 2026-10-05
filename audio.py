@@ -195,7 +195,6 @@ def _microphone_monitor():
             logger.info(
                 "Microphone health: " + ("AVAILABLE" if available else "UNAVAILABLE")
             )
-            print("MICROPHONE HEALTH:", "AVAILABLE" if available else "UNAVAILABLE")
             last_available = available
 
         microphone_monitor_stop.wait(MICROPHONE_CHECK_INTERVAL)
@@ -335,7 +334,6 @@ def start_recording():
         state.microphone_diagnostic = "RECORDING"
         state.error = None
 
-    print("🎙️ Recording...")
     logger.info("Microphone recording started")
     return True
 

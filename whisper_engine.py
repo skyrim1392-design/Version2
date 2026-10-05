@@ -50,7 +50,6 @@ def whisper_transcribe(wav_path):
         logger.error(f"Whisper executable missing: {WHISPER_PATH}")
         raise RuntimeError(f"Whisper executable not found: {WHISPER_PATH}")
 
-    print("🧠 Whisper processing...")
     cancel_requested = False
 
     config = load_config()
@@ -153,11 +152,6 @@ def whisper_transcribe(wav_path):
         stdout, stderr = process.communicate()
         return_code = process.returncode
 
-        print("WHISPER STDOUT:")
-        print(stdout)
-        print("WHISPER STDERR:")
-        print(stderr)
-
         if stderr.strip():
             logger.info(f"Whisper stderr: {stderr.strip()}")
 
@@ -170,9 +164,6 @@ def whisper_transcribe(wav_path):
 
         text = stdout.strip()
         logger.info(f"Whisper transcription completed, characters={len(text)}")
-        print("----------------")
-        print(text)
-        print("----------------")
         return text
     finally:
         if whisper_process is process:

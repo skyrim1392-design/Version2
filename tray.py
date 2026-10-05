@@ -33,8 +33,6 @@ def show_warning(message, duration=3.0):
     """
     global warning_until, warning_message
 
-    print("⚠️", message)
-
     with warning_lock:
         warning_message = message
         warning_until = time.monotonic() + duration

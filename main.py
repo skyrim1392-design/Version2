@@ -13,7 +13,6 @@ import tray
 import whisper_engine
 from app_state import state
 
-print("AUDIO MODULE:", audio.__file__)
 logger.info(f"AUDIO MODULE: {audio.__file__}")
 
 # ================= GLOBAL =================
@@ -25,7 +24,6 @@ WARNING_DURATION = 3.0
 
 
 def show_microphone_warning(message):
-    print("⚠️", message)
     logger.warning(message)
 
     tray.show_warning(
@@ -84,7 +82,6 @@ def f8_down():
         started = audio.start_recording()
 
     except (OSError, RuntimeError) as error:
-        print("⚠️ Microphone unavailable")
         logger.error(f"Microphone unavailable: {error}")
 
         tray.show_microphone_error()
@@ -96,8 +93,6 @@ def f8_down():
         return
 
     if not started:
-        print("⚠️ Microphone unavailable")
-
         logger.warning("Microphone unavailable: audio.start_recording() returned False")
 
         tray.show_microphone_error()
@@ -132,8 +127,6 @@ def f8_up():
 
     f8_active = False
 
-    print("===== F8 RELEASE HANDLER ENTERED =====")
-
     if state.processing:
         print("Ignoring F8: already processing")
 
@@ -154,8 +147,6 @@ def f8_up():
 
     if data is None:
         show_microphone_warning("No usable audio was captured from the microphone.")
-
-        print("No usable audio - transcription cancelled")
 
         logger.warning(
             "Transcription cancelled because no usable microphone audio was captured"
@@ -184,7 +175,6 @@ def f8_up():
         print("Whisper finished")
 
     except (OSError, RuntimeError, ValueError) as error:
-        print("PROCESSING ERROR:", error)
         logger.error(f"Processing error: {error}")
 
         with state.lock:
@@ -198,10 +188,6 @@ def f8_up():
 
             state.status = "IDLE"
 
-    print("FINAL TEXT:")
-
-    print(repr(text))
-
     text_output.type_text(text)
 
 
@@ -214,10 +200,6 @@ def safe_f8_down(e):
         f8_down()
 
     except (OSError, RuntimeError) as error:
-        print("F8 press error:")
-
-        print(error)
-
         logger.error(f"F8 press error: {error}")
 
 
@@ -227,10 +209,6 @@ def safe_f8_up(e):
         f8_up()
 
     except (OSError, RuntimeError) as error:
-        print("F8 release error:")
-
-        print(error)
-
         logger.error(f"F8 release error: {error}")
 
 
@@ -265,8 +243,6 @@ try:
 
 
 except KeyboardInterrupt:
-    print("!!! KeyboardInterrupt detected !!!")
-
     logger.info("Voice Assistant stopped")
 
     print("\nVoice assistant stopped.")

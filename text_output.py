@@ -8,12 +8,7 @@ typing_lock = threading.Lock()
 
 def type_text(text):
 
-    print("TYPE FUNCTION RECEIVED:")
-    print(repr(text))
-    print("TYPE THREAD:", threading.current_thread().name)
-
     if not text:
-        print("NO TEXT TO TYPE")
         return
 
     with typing_lock:
