@@ -20,6 +20,8 @@ warning_until = 0.0
 warning_message = None
 warning_lock = threading.Lock()
 microphone_error = False
+startup_error = False
+startup_error_message = None
 
 
 def show_warning(message, duration=3.0):
@@ -237,6 +239,25 @@ def clear_microphone_error():
     print("TRAY: Microphone recovered")
 
 
+# ================= STARTUP ERROR =================
+
+
+def show_startup_error(message):
+    """
+    Record a persistent startup-validation failure.
+
+    This is UI-only.
+    It does NOT modify application state.status.
+    """
+
+    global startup_error, startup_error_message
+
+    startup_error = True
+    startup_error_message = str(message)
+
+    print("TRAY STARTUP ERROR:", startup_error_message)
+
+
 # ================= EXIT =================
 
 
@@ -263,6 +284,25 @@ def update_tray(icon):
             current_warning_message = warning_message
 
         now = time.monotonic()
+
+        # -------------------------------------------------
+        # PERSISTENT STARTUP ERROR
+        # -------------------------------------------------
+
+        if startup_error:
+            if icon.icon is None or last_status != "STARTUP_ERROR":
+                print("TRAY STATUS: STARTUP_ERROR")
+
+                icon.icon = create_icon("ERROR")
+
+                icon.title = (
+                    "Voice Assistant - Startup error\n" + str(startup_error_message)
+                )
+
+                last_status = "STARTUP_ERROR"
+
+            time.sleep(0.5)
+            continue
 
         # -------------------------------------------------
         # PERSISTENT MICROPHONE ERROR

@@ -7,8 +7,12 @@ from whisper_engine import WHISPER_PATH
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+last_error = None
+
 
 def run_startup_validation():
+    global last_error
+
     logger.info("Running startup validation")
 
     try:
@@ -39,5 +43,6 @@ def run_startup_validation():
         return True
 
     except Exception as error:
+        last_error = str(error)
         logger.error(f"Startup validation failed: {error}")
         return False

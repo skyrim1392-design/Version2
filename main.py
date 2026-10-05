@@ -254,6 +254,7 @@ if runtime_validation.run_startup_validation():
     keyboard.on_release_key("f8", safe_f8_up)
 else:
     logger.error("Startup validation failed; F8 hotkey not registered")
+    tray.show_startup_error(runtime_validation.last_error)
 
 
 # ================= MAIN LOOP =================
