@@ -3,6 +3,8 @@ import json
 import os
 import tempfile
 
+import logger
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
@@ -42,16 +44,16 @@ def load_config():
             config = json.load(f)
 
     except (json.JSONDecodeError, OSError) as e:
-        print("⚠ Config error:", e)
-        print("Using default configuration.")
+        logger.warning(f"Config error: {e}")
+        logger.warning("Using default configuration.")
 
         return copy.deepcopy(DEFAULT_CONFIG)
 
     # Make sure the loaded object is a dictionary
 
     if not isinstance(config, dict):
-        print("⚠ Invalid config format.")
-        print("Using default configuration.")
+        logger.warning("Invalid config format.")
+        logger.warning("Using default configuration.")
 
         return copy.deepcopy(DEFAULT_CONFIG)
 
@@ -92,8 +94,8 @@ def load_config():
 
 def validate_config(config):
     if not isinstance(config, dict):
-        print("⚠ Invalid config format.")
-        print("Using default configuration.")
+        logger.warning("Invalid config format.")
+        logger.warning("Using default configuration.")
         return copy.deepcopy(DEFAULT_CONFIG), True
 
     validated = copy.deepcopy(config)
@@ -102,16 +104,16 @@ def validate_config(config):
     backend = validated.get("whisper_backend")
 
     if not isinstance(backend, str):
-        print("⚠ Invalid whisper_backend.")
-        print("Using AUTO.")
+        logger.warning("Invalid whisper_backend.")
+        logger.warning("Using AUTO.")
         validated["whisper_backend"] = "AUTO"
         changed = True
     else:
         backend = backend.upper()
 
         if backend not in VALID_WHISPER_BACKENDS:
-            print(f"⚠ Unsupported whisper_backend: {backend}")
-            print("Using AUTO.")
+            logger.warning(f"Unsupported whisper_backend: {backend}")
+            logger.warning("Using AUTO.")
             validated["whisper_backend"] = "AUTO"
             changed = True
         elif backend != validated["whisper_backend"]:
@@ -132,8 +134,8 @@ def validate_config(config):
                 changed = True
 
         except (TypeError, ValueError):
-            print("⚠ Invalid gpu_device.")
-            print("Using AUTO.")
+            logger.warning("Invalid gpu_device.")
+            logger.warning("Using AUTO.")
             validated["gpu_device"] = "AUTO"
             changed = True
 
