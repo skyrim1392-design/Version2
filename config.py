@@ -23,7 +23,7 @@ DEFAULT_CONFIG = {
 }
 
 
-VALID_WHISPER_BACKENDS = {"AUTO", "CPU", "VULKAN", "CUDA"}
+VALID_WHISPER_BACKENDS = {"AUTO", "CPU", "VULKAN"}
 
 # ================= LOAD =================
 
