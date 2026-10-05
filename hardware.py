@@ -34,6 +34,7 @@ def detect_vulkan_devices():
             encoding="utf-8",
             errors="replace",
             timeout=10,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError) as error:
         logger.warning(f"Could not probe Vulkan devices: {error}")

@@ -4,6 +4,7 @@ import time
 
 import logger
 from config import load_config
+from hardware import select_backend
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -64,13 +65,17 @@ def whisper_transcribe(wav_path):
     task_mode = config["task_mode"].upper()
 
     threads = str(config.get("threads", 8))
-    gpu_device = str(config.get("gpu_device", 0))
+
+    backend = select_backend()
+    backend_name = backend["backend"]
+    gpu_device = backend["device"]
 
     logger.info(
         f"Whisper config: model={model_name}, "
         f"language={language_mode}, "
         f"task={task_mode}, "
         f"threads={threads}, "
+        f"backend={backend_name}, "
         f"gpu={gpu_device}"
     )
 
@@ -82,12 +87,17 @@ def whisper_transcribe(wav_path):
         wav_path,
         "-t",
         threads,
-        "-dev",
-        gpu_device,
         "--no-timestamps",
         "--temperature",
         "0",
     ]
+
+    if backend_name == "VULKAN":
+        cmd.extend(["-dev", str(gpu_device)])
+    elif backend_name == "CPU":
+        cmd.append("--no-gpu")
+    else:
+        raise RuntimeError(f"Unsupported Whisper backend: {backend_name}")
 
     language = get_whisper_language(language_mode)
     if language:
@@ -118,6 +128,8 @@ def whisper_transcribe(wav_path):
 
         whisper_process = process
 
+        cancelled = False
+
         while True:
             if cancel_requested:
                 logger.info("Whisper cancellation requested")
@@ -127,12 +139,16 @@ def whisper_transcribe(wav_path):
                     pass
                 process.communicate()
                 logger.info("Whisper process cancelled")
-                return ""
+                cancelled = True
+                break
 
             if process.poll() is not None:
                 break
 
             time.sleep(0.1)
+
+        if cancelled:
+            return ""
 
         stdout, stderr = process.communicate()
         return_code = process.returncode
@@ -158,7 +174,6 @@ def whisper_transcribe(wav_path):
         print(text)
         print("----------------")
         return text
-
     finally:
         if whisper_process is process:
             whisper_process = None
