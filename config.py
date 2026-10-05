@@ -23,6 +23,8 @@ DEFAULT_CONFIG = {
 }
 
 
+VALID_WHISPER_BACKENDS = {"AUTO", "CPU", "VULKAN", "CUDA"}
+
 # ================= LOAD =================
 
 
@@ -80,7 +82,62 @@ def load_config():
     if changed:
         save_config(config)
 
+    config, validation_changed = validate_config(config)
+
+    if validation_changed:
+        save_config(config)
+
     return config
+
+
+def validate_config(config):
+    if not isinstance(config, dict):
+        print("⚠ Invalid config format.")
+        print("Using default configuration.")
+        return copy.deepcopy(DEFAULT_CONFIG), True
+
+    validated = copy.deepcopy(config)
+    changed = False
+
+    backend = validated.get("whisper_backend")
+
+    if not isinstance(backend, str):
+        print("⚠ Invalid whisper_backend.")
+        print("Using AUTO.")
+        validated["whisper_backend"] = "AUTO"
+        changed = True
+    else:
+        backend = backend.upper()
+
+        if backend not in VALID_WHISPER_BACKENDS:
+            print(f"⚠ Unsupported whisper_backend: {backend}")
+            print("Using AUTO.")
+            validated["whisper_backend"] = "AUTO"
+            changed = True
+        elif backend != validated["whisper_backend"]:
+            validated["whisper_backend"] = backend
+            changed = True
+
+    gpu_device = validated.get("gpu_device")
+
+    if gpu_device != "AUTO":
+        try:
+            gpu_device = int(gpu_device)
+
+            if gpu_device < 0:
+                raise ValueError
+
+            if gpu_device != validated["gpu_device"]:
+                validated["gpu_device"] = gpu_device
+                changed = True
+
+        except (TypeError, ValueError):
+            print("⚠ Invalid gpu_device.")
+            print("Using AUTO.")
+            validated["gpu_device"] = "AUTO"
+            changed = True
+
+    return validated, changed
 
 
 # ================= SAVE =================
