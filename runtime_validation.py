@@ -2,8 +2,7 @@ import os
 
 import logger
 from config import load_config
-from hardware import select_backend
-from whisper_engine import WHISPER_PATH
+from hardware import WHISPER_PATH, select_backend
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 

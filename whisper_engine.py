@@ -4,16 +4,9 @@ import time
 
 import logger
 from config import load_config
-from hardware import select_backend
+from hardware import WHISPER_PATH, select_backend
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-WHISPER_PATH = os.path.join(
-    BASE_DIR,
-    "whisper",
-    "Vulkan",
-    "whisper-cli.exe",
-)
 
 whisper_process = None
 cancel_requested = False
