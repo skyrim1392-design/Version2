@@ -115,6 +115,40 @@ def is_vulkan_available():
     return bool(get_vulkan_devices())
 
 
+def list_backend_options():
+    """
+    Return the selectable backend options for tray presentation.
+
+    The tray renders these entries directly: it performs no device
+    discovery itself and decides nothing about which backends are usable.
+    Device names come from get_vulkan_devices(), so a device that
+    selection cannot use can never appear in the menu.
+
+    Returns:
+        list[dict]: One option per selectable choice, each containing:
+            label   - display text for the menu entry
+            backend - value to store in config whisper_backend
+            device  - value to store in config gpu_device, or None to
+                      leave gpu_device unchanged
+    """
+
+    options = [
+        {"label": "Auto", "backend": "AUTO", "device": "AUTO"},
+        {"label": "CPU", "backend": "CPU", "device": None},
+    ]
+
+    for device in get_vulkan_devices():
+        options.append(
+            {
+                "label": device["name"],
+                "backend": "VULKAN",
+                "device": device["id"],
+            }
+        )
+
+    return options
+
+
 SUPPORTED_BACKENDS = ("AUTO", "CPU", "VULKAN")
 
 

@@ -5,6 +5,7 @@ import time
 import pystray
 from PIL import Image
 
+import hardware
 import logger
 import microphone_diagnostics
 from app_state import state
@@ -60,28 +61,53 @@ def create_icon(status):
     return Image.new("RGB", (64, 64), "black")
 
 
-# ================= GPU =================
+# ================= BACKEND =================
 
 
-def set_gpu(device):
-    set_config_value("gpu_device", device)
-    logger.info(f"GPU changed to device {device}")
+def apply_backend_option(option):
+    set_config_value("whisper_backend", option["backend"])
+
+    if option["device"] is not None:
+        set_config_value("gpu_device", option["device"])
+
+    logger.info(f"Backend changed to {option['label']}")
 
 
-def gpu_rx580(icon, item):
-    set_gpu(0)
+def backend_selected(option):
+    def select(icon, item):
+        apply_backend_option(option)
+
+    return select
 
 
-def gpu_intel(icon, item):
-    set_gpu(1)
+def is_backend_selected(option):
+    def selected(item):
+        config = load_config()
+
+        if config.get("whisper_backend", "AUTO") != option["backend"]:
+            return False
+
+        # Only Vulkan options pin a specific device. Auto and CPU are
+        # selected by their backend value alone.
+        if option["backend"] == "VULKAN":
+            return config.get("gpu_device", "AUTO") == option["device"]
+
+        return True
+
+    return selected
 
 
-def is_gpu_rx580(item):
-    return load_config().get("gpu_device", 0) == 0
+def build_backend_items():
+    """Build Backend menu entries from hardware's discovered options."""
 
-
-def is_gpu_intel(item):
-    return load_config().get("gpu_device", 0) == 1
+    return [
+        pystray.MenuItem(
+            option["label"],
+            backend_selected(option),
+            checked=is_backend_selected(option),
+        )
+        for option in hardware.list_backend_options()
+    ]
 
 
 # ================= LANGUAGE =================
@@ -372,10 +398,7 @@ def update_tray(icon):
 def start_tray():
     icon_image = create_icon("IDLE")
 
-    gpu_menu = pystray.Menu(
-        pystray.MenuItem("Radeon RX 580", gpu_rx580, checked=is_gpu_rx580),
-        pystray.MenuItem("Intel HD Graphics 530", gpu_intel, checked=is_gpu_intel),
-    )
+    backend_menu = pystray.Menu(build_backend_items)
 
     language_menu = pystray.Menu(
         pystray.MenuItem("Auto", language_auto, checked=is_language_auto),
@@ -408,7 +431,7 @@ def start_tray():
         pystray.MenuItem("Voice Assistant", None, enabled=False),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Microphone", microphone_menu),
-        pystray.MenuItem("GPU", gpu_menu),
+        pystray.MenuItem("Backend", backend_menu),
         pystray.MenuItem("Language", language_menu),
         pystray.MenuItem("Task", task_menu),
         pystray.MenuItem("Model", model_menu),
