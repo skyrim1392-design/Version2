@@ -3,6 +3,8 @@ import time
 
 import pyautogui
 
+import logger
+
 typing_lock = threading.Lock()
 
 
@@ -13,7 +15,7 @@ def type_text(text):
 
     with typing_lock:
 
-        print("START TYPING")
+        logger.info("Start typing")
 
         pyautogui.keyUp("ctrl")
         pyautogui.keyUp("shift")
@@ -23,4 +25,4 @@ def type_text(text):
 
         pyautogui.write(text, interval=0.03)
 
-        print("TEXT TYPED")
+        logger.info("Text typed")

@@ -106,8 +106,7 @@ def whisper_transcribe(wav_path):
         cmd.append("--translate")
 
     logger.info(f"Whisper command started: {cmd[0]}")
-    print("WHISPER COMMAND:")
-    print(cmd)
+    logger.info(f"Whisper command: {' '.join(cmd)}")
 
     process = None
     try:

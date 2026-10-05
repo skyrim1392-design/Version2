@@ -146,11 +146,11 @@ def check_microphone_present():
             state.microphone_error = None
             state.last_microphone_check = time.time()
 
-            print(
-                "MIC STATE:",
-                state.microphone_connected,
-                state.microphone_available,
-                state.status,
+            logger.info(
+                "Mic state: "
+                f"connected={state.microphone_connected} "
+                f"available={state.microphone_available} "
+                f"status={state.status}"
             )
 
             # Clear only microphone-generated errors after recovery.

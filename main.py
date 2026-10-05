@@ -37,10 +37,10 @@ def show_microphone_warning(message):
 
 def cleanup():
 
-    print("Cleaning up...")
+    logger.info("Cleaning up")
 
     if audio.is_recording:
-        print("Stopping active recording")
+        logger.info("Stopping active recording")
 
         audio.stop_recording()
 
@@ -66,7 +66,7 @@ def f8_down():
         return
 
     if state.processing:
-        print("Ignoring F8: already processing")
+        logger.info("Ignoring F8: already processing")
         return
 
     if audio.is_recording:
@@ -76,7 +76,7 @@ def f8_down():
     # It remains locked until F8 is released.
     f8_active = True
 
-    print("F8 pressed")
+    logger.info("F8 pressed")
 
     try:
         started = audio.start_recording()
@@ -113,7 +113,7 @@ def f8_down():
         state.status = "RECORDING"
         state.recording = True
 
-        print("STATE:", state.status)
+        logger.info(f"State: {state.status}")
 
 
 def f8_up():
@@ -121,29 +121,29 @@ def f8_up():
     global f8_active
 
     if not f8_active:
-        print("Ignoring duplicate F8 release")
+        logger.info("Ignoring duplicate F8 release")
 
         return
 
     f8_active = False
 
     if state.processing:
-        print("Ignoring F8: already processing")
+        logger.info("Ignoring F8: already processing")
 
         return
 
     if not audio.is_recording:
-        print("No active recording")
+        logger.info("No active recording")
 
         return
 
-    print("F8 released")
+    logger.info("F8 released")
 
     data = audio.stop_recording()
     with state.lock:
         state.recording = False
 
-    print("STATE:", state.status)
+    logger.info(f"State: {state.status}")
 
     if data is None:
         show_microphone_warning("No usable audio was captured from the microphone.")
@@ -167,12 +167,12 @@ def f8_up():
         if os.path.getsize(wav_path) < 1000:
             raise RuntimeError("WAV file is too small")
 
-        print("Running Whisper...")
+        logger.info("Running Whisper")
 
         text = whisper_engine.whisper_transcribe(wav_path)
         audio.cleanup_old_wavs()
 
-        print("Whisper finished")
+        logger.info("Whisper finished")
 
     except (OSError, RuntimeError, ValueError) as error:
         logger.error(f"Processing error: {error}")

@@ -5,6 +5,7 @@ import time
 import pystray
 from PIL import Image
 
+import logger
 import microphone_diagnostics
 from app_state import state
 from config import load_config, set_config_value
@@ -55,7 +56,7 @@ def create_icon(status):
     if os.path.exists(path):
         return Image.open(path)
 
-    print("Icon missing:", path)
+    logger.warning(f"Icon missing: {path}")
     return Image.new("RGB", (64, 64), "black")
 
 
@@ -64,7 +65,7 @@ def create_icon(status):
 
 def set_gpu(device):
     set_config_value("gpu_device", device)
-    print(f"GPU changed to device {device}")
+    logger.info(f"GPU changed to device {device}")
 
 
 def gpu_rx580(icon, item):
@@ -88,7 +89,7 @@ def is_gpu_intel(item):
 
 def set_language(language):
     set_config_value("language_mode", language)
-    print(f"Language changed to {language}")
+    logger.info(f"Language changed to {language}")
 
 
 def language_auto(icon, item):
@@ -120,7 +121,7 @@ def is_language_persian(item):
 
 def set_task(task):
     set_config_value("task_mode", task)
-    print(f"Task changed to {task}")
+    logger.info(f"Task changed to {task}")
 
 
 def task_transcribe(icon, item):
@@ -159,12 +160,12 @@ def get_available_models():
 
 def set_model(model):
     set_config_value("model", model)
-    print(f"Model changed to {model}")
+    logger.info(f"Model changed to {model}")
 
 
 def model_selected(icon, item):
     model = item.text
-    print(f"Model selected: {model}")
+    logger.info(f"Model selected: {model}")
     set_model(model)
 
 
@@ -182,21 +183,21 @@ def test_microphone(icon, item):
     """Run the explicit microphone test in a worker so the tray stays responsive."""
 
     def worker():
-        print("Starting microphone diagnostic...")
+        logger.info("Starting microphone diagnostic")
         result = microphone_diagnostics.run_microphone_test()
 
         status = result.get("status", "UNKNOWN")
-        print(f"MICROPHONE DIAGNOSTIC: {status}")
+        logger.info(f"Microphone diagnostic: {status}")
 
         if status == "OK":
-            print("Microphone diagnostic passed.")
+            logger.info("Microphone diagnostic passed")
         elif status == "SUSPECT":
-            print(
-                "Microphone is visible and capture is active, "
-                "but no usable signal was detected."
+            logger.warning(
+                "Microphone diagnostic suspect: visible and capture active, "
+                "but no usable signal was detected"
             )
         else:
-            print(
+            logger.warning(
                 "Microphone diagnostic failed: "
                 + str(result.get("message", state.microphone_error))
             )
@@ -234,7 +235,7 @@ def clear_microphone_error():
 
     microphone_error = False
 
-    print("TRAY: Microphone recovered")
+    logger.info("Tray: microphone recovered")
 
 
 # ================= STARTUP ERROR =================
@@ -253,14 +254,14 @@ def show_startup_error(message):
     startup_error = True
     startup_error_message = str(message)
 
-    print("TRAY STARTUP ERROR:", startup_error_message)
+    logger.error(f"Tray startup error: {startup_error_message}")
 
 
 # ================= EXIT =================
 
 
 def exit_application(icon, item):
-    print("Exiting Voice Assistant...")
+    logger.info("Exiting Voice Assistant")
     icon.stop()
 
 
@@ -289,7 +290,7 @@ def update_tray(icon):
 
         if startup_error:
             if icon.icon is None or last_status != "STARTUP_ERROR":
-                print("TRAY STATUS: STARTUP_ERROR")
+                logger.info("Tray status: STARTUP_ERROR")
 
                 icon.icon = create_icon("ERROR")
 
@@ -308,7 +309,7 @@ def update_tray(icon):
 
         if microphone_error:
             if icon.icon is None or last_status != "MICROPHONE_ERROR":
-                print("TRAY STATUS: MICROPHONE_ERROR")
+                logger.info("Tray status: MICROPHONE_ERROR")
 
                 icon.icon = create_icon("ERROR")
 
@@ -330,7 +331,7 @@ def update_tray(icon):
 
         if now < current_warning_until:
             if not warning_active:
-                print("TRAY WARNING: Microphone unavailable")
+                logger.warning("Tray warning: Microphone unavailable")
 
                 icon.icon = create_icon("WARNING")
 
@@ -346,7 +347,7 @@ def update_tray(icon):
         # -------------------------------------------------
 
         if warning_active:
-            print("TRAY WARNING FINISHED")
+            logger.info("Tray warning finished")
 
             warning_active = False
             last_status = None
@@ -356,7 +357,7 @@ def update_tray(icon):
         # -------------------------------------------------
 
         if current_status != last_status:
-            print("TRAY STATUS:", current_status)
+            logger.info(f"Tray status: {current_status}")
 
             icon.icon = create_icon(current_status)
 
