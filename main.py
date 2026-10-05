@@ -76,44 +76,52 @@ def f8_down():
     # It remains locked until F8 is released.
     f8_active = True
 
-    logger.info("F8 pressed")
-
     try:
-        started = audio.start_recording()
+        logger.info("F8 pressed")
 
-    except (OSError, RuntimeError) as error:
-        logger.error(f"Microphone unavailable: {error}")
+        try:
+            started = audio.start_recording()
 
-        tray.show_microphone_error()
+        except (OSError, RuntimeError) as error:
+            logger.error(f"Microphone unavailable: {error}")
+
+            tray.show_microphone_error()
+
+            with state.lock:
+                state.recording = False
+                state.processing = False
+
+            return
+
+        if not started:
+            logger.warning("Microphone unavailable: audio.start_recording() returned False")
+
+            tray.show_microphone_error()
+
+            with state.lock:
+                state.recording = False
+                state.processing = False
+
+            return
+
+        # -------------------------------------------------
+        # MICROPHONE STARTED SUCCESSFULLY
+        # -------------------------------------------------
+
+        tray.clear_microphone_error()
 
         with state.lock:
-            state.recording = False
-            state.processing = False
+            state.status = "RECORDING"
+            state.recording = True
 
-        return
+            logger.info(f"State: {state.status}")
 
-    if not started:
-        logger.warning("Microphone unavailable: audio.start_recording() returned False")
+    except Exception:
+        # The press transaction failed, so release the lock here.
+        # Re-raise: safe_f8_down() reports the original failure.
+        f8_active = False
 
-        tray.show_microphone_error()
-
-        with state.lock:
-            state.recording = False
-            state.processing = False
-
-        return
-
-    # -------------------------------------------------
-    # MICROPHONE STARTED SUCCESSFULLY
-    # -------------------------------------------------
-
-    tray.clear_microphone_error()
-
-    with state.lock:
-        state.status = "RECORDING"
-        state.recording = True
-
-        logger.info(f"State: {state.status}")
+        raise
 
 
 def f8_up():
@@ -199,17 +207,22 @@ def safe_f8_down(e):
     try:
         f8_down()
 
-    except (OSError, RuntimeError) as error:
-        logger.error(f"F8 press error: {error}")
+    except Exception as error:
+        logger.error(f"F8 press error: {type(error).__name__}: {error}")
 
 
 def safe_f8_up(e):
 
+    global f8_active
+
     try:
         f8_up()
 
-    except (OSError, RuntimeError) as error:
-        logger.error(f"F8 release error: {error}")
+    except Exception as error:
+        # Release must unlock even if f8_up failed before clearing the lock.
+        f8_active = False
+
+        logger.error(f"F8 release error: {type(error).__name__}: {error}")
 
 
 # ================= START =================
