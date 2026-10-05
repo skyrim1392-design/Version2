@@ -29,8 +29,15 @@ def detect_vulkan_devices():
     """
     Ask the bundled Whisper executable to enumerate Vulkan devices.
 
+    This probe is the origin of all device information. Backend selection
+    and tray presentation consume its records through get_vulkan_devices(),
+    so they can never disagree. Device names come only from Vulkan
+    discovery, never from hard-coded values.
+
     Returns:
-        list[dict]: Detected Vulkan devices.
+        list[dict]: Discovered Vulkan devices, each record containing:
+            id   - device index passed to whisper as -dev
+            name - device name reported by Vulkan discovery
     """
 
     # Device discovery always probes the Vulkan build: a CPU-only
@@ -91,7 +98,13 @@ def detect_vulkan_devices():
 
 
 def get_vulkan_devices():
-    """Return the currently detected Vulkan devices."""
+    """
+    Return the currently discovered Vulkan devices.
+
+    This is the authoritative accessor for device records. Backend
+    selection and the tray both go through it, so the menu can only ever
+    offer devices that selection is able to use.
+    """
 
     return detect_vulkan_devices()
 
@@ -99,7 +112,7 @@ def get_vulkan_devices():
 def is_vulkan_available():
     """Return True when at least one Vulkan device is available."""
 
-    return bool(detect_vulkan_devices())
+    return bool(get_vulkan_devices())
 
 
 SUPPORTED_BACKENDS = ("AUTO", "CPU", "VULKAN")
@@ -189,7 +202,7 @@ def select_backend():
             f"Unsupported Whisper backend: {backend}. Use AUTO, VULKAN, or CPU."
         )
 
-    devices = detect_vulkan_devices()
+    devices = get_vulkan_devices()
 
     requested_device = config.get("gpu_device", "AUTO")
 
