@@ -87,23 +87,65 @@ def is_vulkan_available():
     return bool(detect_vulkan_devices())
 
 
-def select_backend():
+SUPPORTED_BACKENDS = ("AUTO", "CPU", "VULKAN")
+
+
+def resolve_vulkan_device(devices, requested_device):
     """
-    Select the Whisper backend from configuration.
+    Resolve gpu_device against the discovered Vulkan devices.
 
     AUTO:
-        Prefer Vulkan when available, otherwise CPU.
+        Use the first discovered device.
 
-    VULKAN:
-        Require a Vulkan device.
+    numeric:
+        Must match a discovered device, otherwise RuntimeError.
+
+    Raises:
+        RuntimeError: When no device can be resolved.
+    """
+
+    if not devices:
+        raise RuntimeError("No Vulkan device is available.")
+
+    if str(requested_device).strip().upper() == "AUTO":
+        return devices[0]["id"]
+
+    try:
+        selected_device = int(requested_device)
+    except (TypeError, ValueError) as error:
+        raise RuntimeError(
+            f"Invalid Vulkan device ID: {requested_device}"
+        ) from error
+
+    available_ids = [device["id"] for device in devices]
+
+    if selected_device not in available_ids:
+        raise RuntimeError(
+            f"Configured Vulkan device {selected_device} is not available. "
+            f"Available devices: {available_ids}"
+        )
+
+    return selected_device
+
+
+def select_backend():
+    """
+    Select the Whisper backend and device from configuration.
 
     CPU:
         Always use CPU.
+
+    VULKAN:
+        Require a usable Vulkan device, otherwise RuntimeError.
+
+    AUTO:
+        Use Vulkan when a usable Vulkan device exists, otherwise CPU.
+        An unusable configured gpu_device also falls back to CPU.
     """
 
     config = load_config()
 
-    backend = str(config.get("whisper_backend", "AUTO")).upper()
+    backend = str(config.get("whisper_backend", "AUTO")).strip().upper()
 
     if backend == "CPU":
         logger.info("Whisper backend selected: CPU")
@@ -112,58 +154,46 @@ def select_backend():
             "device": None,
         }
 
+    if backend not in SUPPORTED_BACKENDS:
+        raise RuntimeError(
+            f"Unsupported Whisper backend: {backend}. Use AUTO, VULKAN, or CPU."
+        )
+
     devices = detect_vulkan_devices()
 
-    if backend == "VULKAN":
-        if not devices:
+    requested_device = config.get("gpu_device", "AUTO")
+
+    if not devices:
+        if backend == "VULKAN":
             raise RuntimeError(
                 "Vulkan backend was requested, but no Vulkan device is available."
             )
 
-        device_id = config.get("gpu_device", "AUTO")
-
-        if str(device_id).upper() == "AUTO":
-            selected_device = devices[0]["id"]
-        else:
-            try:
-                selected_device = int(device_id)
-            except (TypeError, ValueError) as error:
-                raise RuntimeError(f"Invalid Vulkan device ID: {device_id}") from error
-
-            available_ids = {device["id"] for device in devices}
-
-            if selected_device not in available_ids:
-                raise RuntimeError(
-                    f"Configured Vulkan device {selected_device} is not available."
-                )
-
-        logger.info(f"Whisper backend selected: VULKAN, device={selected_device}")
-
-        return {
-            "backend": "VULKAN",
-            "device": selected_device,
-        }
-
-    if backend == "AUTO":
-        if devices:
-            selected_device = devices[0]["id"]
-
-            logger.info(
-                f"Whisper backend AUTO selected: VULKAN, device={selected_device}"
-            )
-
-            return {
-                "backend": "VULKAN",
-                "device": selected_device,
-            }
-
-        logger.info("Whisper backend AUTO selected: CPU")
+        logger.info("Whisper backend AUTO selected: CPU (no Vulkan device found)")
 
         return {
             "backend": "CPU",
             "device": None,
         }
 
-    raise RuntimeError(
-        f"Unsupported Whisper backend: {backend}. Use AUTO, VULKAN, or CPU."
+    try:
+        selected_device = resolve_vulkan_device(devices, requested_device)
+    except RuntimeError as error:
+        if backend == "VULKAN":
+            raise
+
+        logger.warning(f"Whisper backend AUTO fell back to CPU: {error}")
+
+        return {
+            "backend": "CPU",
+            "device": None,
+        }
+
+    logger.info(
+        f"Whisper backend selected: {backend} -> VULKAN, device={selected_device}"
     )
+
+    return {
+        "backend": "VULKAN",
+        "device": selected_device,
+    }
