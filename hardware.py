@@ -6,12 +6,23 @@ from config import load_config
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-WHISPER_PATH = os.path.join(
-    BASE_DIR,
-    "whisper",
-    "Vulkan",
-    "whisper-cli.exe",
-)
+# Whisper runtime payloads, one executable per backend.
+# These are runtime files (gitignored), not repository content.
+
+WHISPER_EXE = {
+    "CPU": os.path.join(
+        BASE_DIR,
+        "whisper",
+        "CPU",
+        "whisper-cli.exe",
+    ),
+    "VULKAN": os.path.join(
+        BASE_DIR,
+        "whisper",
+        "Vulkan",
+        "whisper-cli.exe",
+    ),
+}
 
 
 def detect_vulkan_devices():
@@ -22,13 +33,17 @@ def detect_vulkan_devices():
         list[dict]: Detected Vulkan devices.
     """
 
-    if not os.path.isfile(WHISPER_PATH):
-        logger.warning(f"Whisper executable not found: {WHISPER_PATH}")
+    # Device discovery always probes the Vulkan build: a CPU-only
+    # executable cannot enumerate Vulkan devices.
+    vulkan_exe = WHISPER_EXE["VULKAN"]
+
+    if not os.path.isfile(vulkan_exe):
+        logger.warning(f"Whisper executable not found: {vulkan_exe}")
         return []
 
     try:
         result = subprocess.run(
-            [WHISPER_PATH, "--help"],
+            [vulkan_exe, "--help"],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -134,7 +149,7 @@ def _cpu_backend_spec():
     return {
         "backend": "CPU",
         "device": None,
-        "executable": WHISPER_PATH,
+        "executable": WHISPER_EXE["CPU"],
         "device_args": ["--no-gpu"],
     }
 
@@ -205,6 +220,6 @@ def select_backend():
     return {
         "backend": "VULKAN",
         "device": selected_device,
-        "executable": WHISPER_PATH,
+        "executable": WHISPER_EXE["VULKAN"],
         "device_args": ["-dev", str(selected_device)],
     }
