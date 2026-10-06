@@ -207,6 +207,31 @@ def is_model_selected(model):
     return check
 
 
+def build_model_items():
+    """Build Model menu entries from disk plus the configured model.
+
+    Re-evaluated whenever the menu opens, so models added or removed at
+    runtime appear without a restart. The configured model stays visible
+    and checked even when its file is missing from disk; showing it does
+    not make the file available. When nothing is listed at all, a single
+    disabled placeholder is shown.
+    """
+    configured = load_config().get("model", "")
+    models = list(get_available_models())
+
+    if configured and configured not in models:
+        models.append(configured)
+        models.sort()
+
+    if not models:
+        return [pystray.MenuItem("No models found", None, enabled=False)]
+
+    return [
+        pystray.MenuItem(model, model_selected, checked=is_model_selected(model))
+        for model in models
+    ]
+
+
 # ================= MICROPHONE DIAGNOSTICS =================
 
 
@@ -419,11 +444,7 @@ def start_tray():
         ),
     )
 
-    model_items = [
-        pystray.MenuItem(model, model_selected, checked=is_model_selected(model))
-        for model in get_available_models()
-    ]
-    model_menu = pystray.Menu(*model_items)
+    model_menu = pystray.Menu(build_model_items)
 
     microphone_menu = pystray.Menu(
         pystray.MenuItem(
