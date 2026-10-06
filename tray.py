@@ -45,6 +45,7 @@ def create_icon(status):
         "IDLE": "idle.png",
         "RECORDING": "recording.png",
         "PROCESSING": "processing.png",
+        "OUTPUTTING": "processing.png",
         "WARNING": "error.png",
         "ERROR": "error.png",
         # Use the existing error icon until a dedicated suspect icon is designed.

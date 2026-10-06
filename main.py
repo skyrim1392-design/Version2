@@ -23,6 +23,15 @@ f8_active = False
 WARNING_DURATION = 3.0
 
 
+OUTPUT_WARNING_MESSAGES = {
+    text_output.NO_TARGET: "No active window for the text",
+    text_output.CAPTURE_FAILED: "Output failed: clipboard unavailable",
+    text_output.WRITE_FAILED: "Output failed: clipboard unavailable",
+    text_output.HOTKEY_FAILED: "Output failed: text kept in clipboard",
+    text_output.RESTORE_FAILED: "Text pasted; clipboard not restored",
+}
+
+
 def show_microphone_warning(message):
     logger.warning(message)
 
@@ -67,6 +76,10 @@ def f8_down():
 
     if state.processing:
         logger.info("Ignoring F8: already processing")
+        return
+
+    if state.status == "OUTPUTTING":
+        logger.info("Ignoring F8: output in progress")
         return
 
     if audio.is_recording:
@@ -204,7 +217,22 @@ def f8_up():
 
             state.status = "IDLE"
 
-    text_output.deliver(text)
+    with state.lock:
+        state.status = "OUTPUTTING"
+
+    logger.info(f"State: {state.status}")
+
+    result = text_output.deliver(text)
+
+    warning = OUTPUT_WARNING_MESSAGES.get(result)
+
+    if warning:
+        tray.show_warning(warning, duration=WARNING_DURATION)
+
+    with state.lock:
+        state.status = "IDLE"
+
+    logger.info(f"State: {state.status}")
 
 
 # ================= SAFE HANDLERS =================
