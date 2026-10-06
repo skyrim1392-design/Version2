@@ -321,6 +321,22 @@ def show_startup_error(message):
     logger.error(f"Tray startup error: {startup_error_message}")
 
 
+def clear_startup_error():
+    """Clear a startup-validation failure after a successful retry.
+
+    The status loop resumes normal display on its next iteration.
+    """
+    global startup_error, startup_error_message
+
+    if not startup_error:
+        return
+
+    startup_error = False
+    startup_error_message = None
+
+    logger.info("Tray: startup error cleared")
+
+
 # ================= EXIT =================
 
 

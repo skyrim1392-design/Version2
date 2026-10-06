@@ -3,10 +3,9 @@ import os
 import threading
 import time
 
-import keyboard
-
 import audio
 import logger
+import recovery
 import runtime_validation
 import text_output
 import tray
@@ -281,9 +280,10 @@ print(" Release F8 to transcribe")
 print("================================")
 
 
+recovery.configure_f8_handlers(safe_f8_down, safe_f8_up)
+
 if runtime_validation.run_startup_validation():
-    keyboard.on_press_key("f8", safe_f8_down)
-    keyboard.on_release_key("f8", safe_f8_up)
+    recovery.register_f8()
 else:
     logger.error("Startup validation failed; F8 hotkey not registered")
     tray.show_startup_error(runtime_validation.last_error)
