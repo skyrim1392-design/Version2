@@ -31,6 +31,8 @@ def deliver(text):
     Clipboard transaction contract:
       - the previous clipboard state is captured before any write
       - a capture failure aborts delivery while the clipboard is untouched
+      - the target is re-checked after the settle delay; a disappearing
+        target aborts with the previous clipboard restored and no paste
       - after a successful paste the previous state is restored, but only
         while the clipboard still holds the delivered text
       - transcription contents are never written to the log
@@ -63,6 +65,11 @@ def deliver(text):
             return WRITE_FAILED
 
         time.sleep(SETTLE_DELAY)
+
+        if not _has_foreground_target():
+            logger.error("Foreground target disappeared before paste")
+            _restore_clipboard(previous, text)
+            return NO_TARGET
 
         try:
             pyautogui.hotkey("ctrl", "v")

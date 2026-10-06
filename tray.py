@@ -28,12 +28,16 @@ startup_error_message = None
 
 def show_warning(message, duration=3.0):
     """
-    Show a temporary microphone warning in the tray.
+    Show a temporary warning in the tray.
 
     This is UI-only.
     It does NOT modify application state.status.
+    The warning content is logged here at its source, so it is recorded
+    even when the tray loop is busy with a persistent error state.
     """
     global warning_until, warning_message
+
+    logger.warning(f"Tray warning: {message}")
 
     with warning_lock:
         warning_message = message
@@ -300,6 +304,7 @@ def update_tray(icon):
 
     last_status = None
     warning_active = False
+    last_warning_message = None
 
     while True:
         with state.lock:
@@ -357,13 +362,12 @@ def update_tray(icon):
         # -------------------------------------------------
 
         if now < current_warning_until:
-            if not warning_active:
-                logger.warning("Tray warning: Microphone unavailable")
-
+            if not warning_active or current_warning_message != last_warning_message:
                 icon.icon = create_icon("WARNING")
 
                 icon.title = "Voice Assistant - " + str(current_warning_message)
 
+                last_warning_message = current_warning_message
                 warning_active = True
 
             time.sleep(0.1)
@@ -377,6 +381,7 @@ def update_tray(icon):
             logger.info("Tray warning finished")
 
             warning_active = False
+            last_warning_message = None
             last_status = None
 
         # -------------------------------------------------
