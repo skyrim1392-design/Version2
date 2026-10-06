@@ -16,11 +16,64 @@ from app_state import state
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+class _BusyResult:
+    """Falsey start_recording() result: microphone owned by another session.
+
+    Distinct from False (microphone failure) so callers can separate
+    resource contention from a physical microphone problem without
+    parsing logs or exception strings.
+    """
+
+    def __bool__(self):
+        return False
+
+    def __repr__(self):
+        return "MICROPHONE_BUSY"
+
+
+MICROPHONE_BUSY = _BusyResult()
+
+_mic_owner = None
+_mic_owner_lock = threading.Lock()
+
+
+def claim_microphone(owner):
+    """Claim exclusive microphone ownership at the capture boundary.
+
+    Exactly one owner at a time ("f8" or "live"). Re-claiming your own
+    ownership succeeds; claiming another owner's fails. Must be called
+    BEFORE any state mutation or InputStream creation.
+    """
+    global _mic_owner
+
+    with _mic_owner_lock:
+        if _mic_owner is None or _mic_owner == owner:
+            _mic_owner = owner
+            return True
+
+        return False
+
+
+def release_microphone(owner):
+    """Release microphone ownership. Owner-scoped: releasing a session
+    that does not own the microphone is a no-op."""
+    global _mic_owner
+
+    with _mic_owner_lock:
+        if _mic_owner == owner:
+            _mic_owner = None
+            return True
+
+        return False
+
+
 def reset_audio_state():
 
     global stream, is_recording
 
     logger.info("Resetting audio state")
+
+    release_microphone("f8")
 
     is_recording = False
 
@@ -263,6 +316,11 @@ def start_recording():
     mic_name = current_config.get("microphone", "auto")
 
     microphone_index = find_microphone(mic_name)
+
+    if not claim_microphone("f8"):
+        logger.warning("Microphone busy: live capture owns the device")
+        return MICROPHONE_BUSY
+
     recording = []
 
     with state.lock:
@@ -372,6 +430,8 @@ def stop_recording():
         logger.error(f"Audio close error: {error}")
 
     stream = None
+
+    release_microphone("f8")
 
     # -------------------------------------------------
     # READ AUDIO STATE

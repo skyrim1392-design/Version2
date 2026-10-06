@@ -107,6 +107,11 @@ def f8_down():
 
             return
 
+        if started is audio.MICROPHONE_BUSY:
+            logger.info("Ignoring F8: microphone busy")
+
+            return
+
         if not started:
             logger.warning("Microphone unavailable: audio.start_recording() returned False")
 
