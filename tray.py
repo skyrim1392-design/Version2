@@ -10,6 +10,7 @@ import logger
 import microphone_diagnostics
 from app_state import state
 from config import load_config, set_config_value
+from runtime_validation import validate_model_file
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -199,6 +200,13 @@ def set_model(model):
 
 def model_selected(icon, item):
     model = item.text
+    problem = validate_model_file(os.path.join(BASE_DIR, "models", model))
+
+    if problem is not None:
+        logger.warning(f"Model selection rejected: {model} ({problem})")
+        show_warning(f"Model not usable: {model} ({problem})")
+        return
+
     logger.info(f"Model selected: {model}")
     set_model(model)
 

@@ -47,6 +47,8 @@ def cleanup():
 
     logger.info("Cleaning up")
 
+    recovery.stop_startup_retry()
+
     if audio.is_recording:
         logger.info("Stopping active recording")
 
@@ -287,6 +289,7 @@ if runtime_validation.run_startup_validation():
 else:
     logger.error("Startup validation failed; F8 hotkey not registered")
     tray.show_startup_error(runtime_validation.last_error)
+    recovery.start_startup_retry()
 
 
 # ================= MAIN LOOP =================

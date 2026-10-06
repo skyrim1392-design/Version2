@@ -50,10 +50,18 @@ def validate_model_file(model_path):
     return None
 
 
-def run_startup_validation():
+def run_startup_validation(quiet=False):
+    """Run full startup validation (model + executable/backend).
+
+    quiet=True suppresses the per-attempt start/failure log lines so a
+    periodic retry caller does not repeat them every cycle. last_error is
+    still recorded and the success line is always logged. Default
+    behavior is unchanged for the boot path and direct callers.
+    """
     global last_error
 
-    logger.info("Running startup validation")
+    if not quiet:
+        logger.info("Running startup validation")
 
     try:
         config = load_config()
@@ -92,5 +100,8 @@ def run_startup_validation():
 
     except Exception as error:
         last_error = str(error)
-        logger.error(f"Startup validation failed: {error}")
+
+        if not quiet:
+            logger.error(f"Startup validation failed: {error}")
+
         return False
