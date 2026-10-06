@@ -204,7 +204,7 @@ def f8_up():
 
             state.status = "IDLE"
 
-    text_output.type_text(text)
+    text_output.deliver(text)
 
 
 # ================= SAFE HANDLERS =================
