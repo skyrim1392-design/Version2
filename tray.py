@@ -25,6 +25,9 @@ microphone_error = False
 startup_error = False
 startup_error_message = None
 
+# Display states that always win over the temporary warning overlay.
+ACTIVE_STATES = ("RECORDING", "PROCESSING", "OUTPUTTING")
+
 
 def show_warning(message, duration=3.0):
     """
@@ -268,6 +271,11 @@ def test_microphone(icon, item):
 def show_microphone_error():
     global microphone_error
 
+    # Notify only when transitioning into the error state so repeated
+    # failed presses do not spam OS notifications. Icon/title persist.
+    if microphone_error:
+        return
+
     microphone_error = True
 
     if tray_icon:
@@ -383,10 +391,20 @@ def update_tray(icon):
             continue
 
         # -------------------------------------------------
-        # TEMPORARY WARNING
+        # ACTIVE STATE WINS OVER WARNING
         # -------------------------------------------------
 
-        if now < current_warning_until:
+        if current_status in ACTIVE_STATES and warning_active:
+            logger.info(f"Tray warning superseded by {current_status}")
+
+            warning_active = False
+            last_warning_message = None
+
+        # -------------------------------------------------
+        # TEMPORARY WARNING (only over IDLE)
+        # -------------------------------------------------
+
+        if now < current_warning_until and current_status == "IDLE":
             if not warning_active or current_warning_message != last_warning_message:
                 icon.icon = create_icon("WARNING")
 

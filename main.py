@@ -206,6 +206,11 @@ def f8_up():
     except (OSError, RuntimeError, ValueError) as error:
         logger.error(f"Processing error: {error}")
 
+        tray.show_warning(
+            "Processing failed - see log",
+            duration=WARNING_DURATION,
+        )
+
         with state.lock:
             state.status = "IDLE"
 
