@@ -1,14 +1,16 @@
 # Windows Voice Assistant — Agent Handover
 
-Last updated: 2026-10-07 (7d.2 session — implementation, tests, docs)
+Last updated: 2026-10-07 (post-7d.2 push; docs sync commit pending push — Schannel CRL offline)
 Repository: `C:\VoiceAssistant\Version2`
 Branch: `backend-foundation`
-Current HEAD: `dc5c4aa` — Integrate live transcription lifecycle (7d.1 checkpoint)
-Remote: `origin/backend-foundation` — **1 commit ahead, NOT pushed**
-Worktree: **7d.2 changes are implemented and UNCOMMITTED** (see "7d.2
-contents"), plus the expected exclusions (`config.json`,
-`whisper/whisper-vulkan`, `real_mic_validation*.py`) and untracked
-`real_mic_validation*.py`
+Current HEAD: `f186167` — Sync handover docs to pushed 7d.2 checkpoint (local only)
+Base checkpoint: `4de4bfd` — Harden live transcription shutdown and tray lifecycle (7d.2), **pushed**
+Remote: `origin/backend-foundation` — at `4de4bfd`; local is **ahead 1** (docs sync commit, push currently blocked by Schannel `CRYPT_E_REVOCATION_OFFLINE`; retry push before treating the repo as fully checkpointed)
+Worktree: **7d.2 is committed and pushed.** Working tree contains only
+the expected exclusions (`config.json`, `whisper/whisper-vulkan`,
+`real_mic_validation*.py`) and the local icon PNG experiments
+(`error.png`, `idle.png`, `processing.png`, `recording.png`, `icons/*.png`),
+which remain local and are never committed
 
 ## Authority
 
@@ -92,9 +94,9 @@ Live mode
 **Phase 7d.2 — Production hardening (tray coverage, shutdown
 quiescence, Whisper orphan handling)**
 
-Status: `7d.2 IMPLEMENTED — AT THE IMPLEMENTATION/TEST-REVIEW GATE`
+Status: `7d.2 COMPLETE — committed as 4de4bfd and pushed to origin`
 
-- Code implemented: yes (see "7d.2 contents"), **uncommitted**
+- Code implemented: yes (see "7d.2 contents"), **committed `4de4bfd`, pushed**
 - Automated tests: 152/152 pass (`python -m unittest discover -v`,
   16.8 s) — 126 baseline + 26 new
 - Static checks: all 7d.2-touched files pass `ruff check`; full repo
@@ -106,14 +108,13 @@ Status: `7d.2 IMPLEMENTED — AT THE IMPLEMENTATION/TEST-REVIEW GATE`
 - Supplementary out-of-repo driver: Exit invoked during F8
   `PROCESSING` quiesced in 2.423 s, child exit 0, no orphaned Whisper
   process
-- 7d.1 checkpoint: **`dc5c4aa`** still HEAD, **not pushed**
+- 7d.2 checkpoint: **`4de4bfd`**, pushed; `origin/backend-foundation`
+  synced
 
-Next action: **STOP AT THE GATE.** Review this session's diff
-(`git status` + `git diff`), then either request approval for a 7d.2
-checkpoint commit (staging only 7d.2 code/tests/docs — never
-`config.json`, `whisper/whisper-vulkan`, `real_mic_validation*.py`) or
-send changes back for revision. No commit, no push, no new work without
-explicit approval.
+Next action: **7d.3 design gate.** The next session enters a
+**read-only 7d.3 design review** starting from the clean shared
+checkpoint `4de4bfd`. No 7d.3 implementation until that design gate
+concludes.
 
 ---
 
@@ -124,10 +125,10 @@ explicit approval.
 | 7b.4 Calibration robustness | `2691031` | pushed |
 | 7c Live transcription delivery | `dd5d231` | pushed |
 | 7d.0 Design gate | — | approved, no code |
-| 7d.1 Lifecycle + tray | `dc5c4aa` | committed 2026-10-07, **local only — NOT pushed (current HEAD)** |
-| 7d.2 Hardening | — | **implemented, uncommitted** — at test-review gate |
+| 7d.1 Lifecycle + tray | `dc5c4aa` | committed 2026-10-07, pushed |
+| 7d.2 Hardening | `4de4bfd` | committed + pushed 2026-10-07 (current HEAD) |
 
-Remote is therefore 1 commit behind local: `backend-foundation...origin/backend-foundation [ahead 1]`.
+Remote is synced with local: `backend-foundation...origin/backend-foundation` (no ahead/behind).
 
 Never commit (development/validation scripts only):
 
@@ -209,7 +210,7 @@ Deliberately excluded from the commit (still dirty/untracked):
 
 ---
 
-## 7d.2 contents (implemented, UNCOMMITTED)
+## 7d.2 contents (committed in `4de4bfd`, pushed)
 
 Modified:
 
@@ -257,9 +258,9 @@ SHA-256 identical before/after the smoke run, `audio.py` /
 
 ## Current blocker
 
-**Gate, not a defect.** Implementation, synthetic tests and the
-targeted 7d.1 smoke re-run are complete. The session stopped as
-instructed at the implementation/test-review gate.
+**None.** 7d.2 is committed (`4de4bfd`) and pushed; the working tree
+matches `origin/backend-foundation`. The only permitted next
+transition is the **read-only 7d.3 design gate**.
 
 Environment limitations encountered (both reproducible outside the
 application; recorded with evidence in `docs/TEST_STATUS.md`):
@@ -278,9 +279,9 @@ application; recorded with evidence in `docs/TEST_STATUS.md`):
 
 Remaining (non-blocking) items:
 
-1. **Review + approval** of the 7d.2 diff before any commit
-   (`commit_allowed=false` until then); the 7d.1 push decision remains
-   separate (`push_allowed=false`).
+1. **Next session:** enter the read-only 7d.3 design review from the
+   shared checkpoint `4de4bfd`. Do not implement 7d.3 before the
+   design gate concludes.
 2. **Deferred by decision (D13–D15, listed in `ROADMAP.md`):** stale
    tray title on the stopped icon object after Exit; startup restore
    retry on next launch (persisted `live_mode_enabled=true` simply
@@ -326,15 +327,15 @@ Notes:
 >
 > First read `docs/HANDOVER.md`, then `docs/TEST_STATUS.md` and `docs/DECISIONS.md`.
 >
-> HEAD is still **`dc5c4aa` "Integrate live transcription lifecycle"** (7d.1), committed locally and **NOT pushed** (`[ahead 1]`). **7d.2 is implemented but UNCOMMITTED** — it lives only in the working tree: `tray.py`, `live_supervisor.py`, `whisper_engine.py`, `test_live_supervisor.py`, new `test_tray.py` and `test_config_persistence.py`, plus all eight `docs/` files.
+> HEAD is **`4de4bfd` "Harden live transcription shutdown and tray lifecycle"** (7d.2), committed locally and **pushed** — `backend-foundation` matches `origin/backend-foundation`.
 >
 > `152/152` automated tests pass and ruff is clean on every touched file. The targeted 7d.1 smoke re-run passed 7/8 scenarios (the eighth, `physical_exit`, is blocked by this session's denied `GetCursorPos` — environment, see `docs/TEST_STATUS.md`), and a supplementary driver proved Exit during `PROCESSING` quiesces in 2.423 s and exits 0 with no orphaned Whisper child.
 >
-> **Do not commit. Do not push. Do not start new work.**
+> **Do not start 7d.3 implementation.**
 >
-> Next action: **review** — inspect `git status` and `git diff` for the 7d.2 changes, read `docs/TEST_STATUS.md` → "7d.2 targeted smoke re-run", then request explicit approval for the 7d.2 checkpoint commit (staging only 7d.2 code/tests/docs) and, separately, the push decision for `dc5c4aa`.
+> Next action: **read-only 7d.3 design review.** Work from the clean shared checkpoint. No commits, no implementation work until the 7d.3 design gate concludes.
 >
-> Working tree must contain only the known exclusions plus the 7d.2 changes listed above: `config.json`, `whisper/whisper-vulkan`, `real_mic_validation.py`, `real_mic_validation_7c.py`, and the pre-existing icon PNG dirt (`error.png`, `idle.png`, `processing.png`, `recording.png`).
+> Working tree contains only the known exclusions: `config.json`, `whisper/whisper-vulkan`, `real_mic_validation.py`, `real_mic_validation_7c.py`, and the local icon PNG experiments (`error.png`, `idle.png`, `processing.png`, `recording.png`, `icons/*.png` — local only, never commit).
 >
 > Items deferred inside 7d.2 by decision: stale tray title, startup restore retry, second-caller shutdown semantics (`ROADMAP.md` → "Known deferred items").
 
@@ -375,4 +376,5 @@ session end (see the rule above).
 | 2026-10-07 | Documentation | Created `docs/` handover layer, authority model, forbidden assumptions | complete | `project_state.json` validated |
 | 2026-10-07 | 7d.1 manual smoke test | Ran the `docs/TEST_STATUS.md` tray checklist with an out-of-repo harness (8 scenarios: tray Exit from `LIVE_IDLE`/`LIVE_LISTENING`/F8 `PROCESSING`, Live ON/OFF, forced `LIVE_ERROR` + retry, config persistence, F8 rejection, rendering precedence, physical Win32 menu Exit) | **PASS** — all 8 children exited code 0, no leftover Whisper process, `config.json.live_mode_enabled=false`, `git status` unchanged, no commit | 126/126 re-run OK (11.35 s), `ruff check` on 7d.1 files clean, results in `%TEMP%\opencode\smoke_7d1_results.json` |
 | 2026-10-07 | 7d.1 checkpoint commit | Approved commit: staged only `app_state.py config.py main.py tray.py live_supervisor.py test_integration_7d.py test_live_supervisor.py docs/`; excluded `config.json`, `whisper/whisper-vulkan`, `real_mic_validation*.py` | committed **`dc5c4aa` "Integrate live transcription lifecycle"** (14 files, +1826/−11), **not pushed**, branch `[ahead 1]` | 126/126 tests OK (11.45 s) and `ruff check` clean immediately before commit; `git log -1 --stat` verified; `git status` shows only the four exclusions + this doc sync |
-| 2026-10-07 | 7d.2 implementation (this session) | Approved scope: extracted `tray.display_status` + D6/overlay/thin-loop/Exit tests, extended `shutdown()` quiescence to every F8 state with `whisper_engine.terminate_outstanding()` on timeout, `exit_application` `try`/`finally`, `LIVE_ERROR` + config-persistence suites, docs D13–D15 | **complete, UNCOMMITTED — stopped at the implementation/test-review gate as instructed; no commit, no push** | 152/152 tests OK (17.1 s), ruff clean on all touched files, full repo 30 pre-existing findings, `config.json` SHA-256 unchanged, `audio.py`/`live_capture.py`/`main.py` diff-clean; smoke re-run 7/8 PASS (`physical_exit` = denied `GetCursorPos`, environment) + supplementary `PROCESSING` Exit driver PASS (2.423 s quiesce, exit 0, no Whisper leftover) |
+| 2026-10-07 | 7d.2 implementation (this session) | Approved scope: extracted `tray.display_status` + D6/overlay/thin-loop/Exit tests, extended `shutdown()` quiescence to every F8 state with `whisper_engine.terminate_outstanding()` on timeout, `exit_application` `try`/`finally`, `LIVE_ERROR` + config-persistence suites, docs D13–D15 | **complete, stopped at the implementation/test-review gate as instructed** | 152/152 tests OK (17.1 s), ruff clean on all touched files, smoke re-run 7/8 PASS + supplementary `PROCESSING` Exit driver PASS (2.423 s quiesce, exit 0) |
+| 2026-10-07 | 7d.2 checkpoint + push | Approved: commit `4de4bfd` "Harden live transcription shutdown and tray lifecycle" (13 files, +1424/−120, 7d.2 code/tests/docs only), pushed `backend-foundation` to origin; handover + `project_state.json` synced to pushed state, HEAD `4de4bfd`, 7d.2 complete, next transition = read-only 7d.3 design gate; icon PNG experiments remain local/excluded | **pushed, remote synced with HEAD `4de4bfd`** | `git status` shows only expected exclusions + local icon PNG dirt; `git branch -vv` confirms no ahead/behind; one transient schannel revocation error on push retry confirmed the ref was already at `4de4bfd` |
