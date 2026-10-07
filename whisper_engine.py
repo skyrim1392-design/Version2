@@ -1,5 +1,6 @@
 import os
 import subprocess
+import threading
 import time
 
 import logger
@@ -9,7 +10,12 @@ from hardware import select_backend
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 whisper_process = None
-cancel_requested = False
+
+# M1 (7c.3): held for the entire whisper-cli invocation lifetime, so
+# every caller (live transcription, F8) is serialized with no
+# caller-side ordering assumptions.
+_invoke_lock = threading.Lock()
+INVOKE_POLL_INTERVAL = 0.05
 
 
 def get_whisper_language(language_mode):
@@ -25,11 +31,50 @@ def get_whisper_language(language_mode):
         return None
 
 
-def whisper_transcribe(wav_path):
-    global whisper_process
-    global cancel_requested
+def whisper_transcribe(wav_path, cancel_event=None):
+    """Run one whisper-cli invocation for one caller.
 
+    _invoke_lock is held for the entire invocation lifetime, so
+    concurrent callers are serialized automatically. Cancellation is
+    owned per call, never global:
+
+    - while waiting for the lock, a set cancel_event returns "" with
+      the "cancelled before acquisition" log and never spawns;
+      cancel_event=None waits normally until the lock is granted
+    - inside the invocation only the cancel_event this call was given
+      is polled, so cancelling one invocation never affects another
+      (None never cancels - the F8 path)
+    - a cancel_event set between a successful acquisition and the
+      spawn is observed by the in-invocation poll right after spawn
+    """
     logger.info("Whisper transcription started")
+
+    if cancel_event is None:
+        _invoke_lock.acquire()
+    else:
+        while True:
+            if cancel_event.is_set():
+                logger.info(
+                    "Whisper invocation cancelled before acquisition"
+                )
+                return ""
+            if _invoke_lock.acquire(timeout=INVOKE_POLL_INTERVAL):
+                break
+
+    try:
+        return _invoke_whisper(wav_path, cancel_event)
+    finally:
+        _invoke_lock.release()
+
+
+def _invoke_whisper(wav_path, cancel_event):
+    """Validate, spawn, and reap one whisper-cli process (lock held).
+
+    The process poll loop observes only the cancel_event this call was
+    given (None never cancels). whisper_process is kept for
+    diagnostics and cleared in finally, exactly as before.
+    """
+    global whisper_process
 
     if not os.path.exists(wav_path):
         logger.error(f"WAV missing: {wav_path}")
@@ -46,8 +91,6 @@ def whisper_transcribe(wav_path):
         raise RuntimeError(
             f"Whisper executable not found: {backend_spec['executable']}"
         )
-
-    cancel_requested = False
 
     config = load_config()
     model_name = config["model"]
@@ -118,7 +161,7 @@ def whisper_transcribe(wav_path):
         cancelled = False
 
         while True:
-            if cancel_requested:
+            if cancel_event is not None and cancel_event.is_set():
                 logger.info("Whisper cancellation requested")
                 try:
                     process.kill()

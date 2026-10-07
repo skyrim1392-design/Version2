@@ -73,11 +73,14 @@ Locked invariants:
    comparison only: case-sensitive, punctuation and whitespace
    significant, no normalization, no fuzzy matching.
 
-4. Cancellation: setting whisper_engine.cancel_requested from the stop
-   path is permitted only because test_whisper_cancel_lifecycle proves
-   a fresh invocation resets the flag before spawning, so cancellation
-   cannot leak into the next transcription. whisper_engine.py itself is
-   never modified by 7b.
+4. Cancellation (7c.3, M1): there is no global cancellation flag. The
+   transcription path forwards cancel_event=stop_event into
+   whisper_engine.whisper_transcribe(), which serializes every
+   invocation behind its internal lock and polls only the event it was
+   given; a live stop therefore kills the live invocation alone and an
+   F8 call (cancel_event=None) is never affected. The stop path only
+   sets stop_event and joins. test_whisper_cancel_lifecycle proves the
+   serialization and the per-invocation ownership.
 
 5. Calibration replay (step 3b): every chunk read during calibration is
    buffered and replayed through the normal UtteranceAssembler path -
@@ -149,6 +152,18 @@ loops, spectral or neural VAD, automatic gain control, and
 normalization; THRESHOLD_MULTIPLIER stays 1.75 unless measurement
 demands re-derivation (7b.4 D4). Unit tests: test_live_transcribe.py
 (synthetic windows against a faked capture).
+
+Step 7c.1 content: the ordered read-only cursor API over the memory
+transcript - create_cursor() and read_cursor(cursor). Exactly-once
+consumption happens only by cursor advancement (the reader stores the
+returned cursor), session boundaries are detected by a session id that
+increments on every successful start(), a stale cursor realigns to
+(session, 0) and its unread old-session segments are dropped, and empty
+strings are never exposed. One transcript store only: the cursor reads
+the existing _transcript list, get_transcript() is unchanged, and no
+output, delivery, text_output, tray, or app_state code exists here
+(live_output.py arrives in 7c.2). Unit tests: test_live_transcribe.py
+(direct segment appends plus a real session boundary).
 
 Worker exit contract (no worker-thread self-join anywhere):
     - stop() sets stop_event; the worker flushes pending speech into
@@ -487,6 +502,7 @@ _calibration_rejected = 0
 _calibration_usable = 0
 _calibration_contaminated = False
 _transcript = []
+_transcript_session = 0
 _previous_text = ""
 _consecutive_failures = 0
 
@@ -587,14 +603,16 @@ def _write_wav(path, samples):
         handle.writeframes(samples.tobytes())
 
 
-def _transcribe_commit(commit):
+def _transcribe_commit(commit, stop_event):
     """Run one-shot Whisper over one committed window.
 
-    The samples are written to a fresh WAV in TEMP_DIR (created on
-    demand so a missing temp/ never fails a session) and the file is
-    removed in finally, on success and on failure alike. Failures
-    propagate to the transcription loop, which counts them; nothing
-    about the audio or the text is logged here.
+    The session stop event is forwarded as cancel_event (M1, 7c.3) so
+    a live stop kills this invocation inside the engine without a
+    global flag. The samples are written to a fresh WAV in TEMP_DIR
+    (created on demand so a missing temp/ never fails a session) and
+    the file is removed in finally, on success and on failure alike.
+    Failures propagate to the transcription loop, which counts them;
+    nothing about the audio or the text is logged here.
     """
     os.makedirs(TEMP_DIR, exist_ok=True)
     descriptor, wav_path = tempfile.mkstemp(suffix=".wav", dir=TEMP_DIR)
@@ -602,7 +620,9 @@ def _transcribe_commit(commit):
 
     try:
         _write_wav(wav_path, commit.samples)
-        return whisper_engine.whisper_transcribe(wav_path)
+        return whisper_engine.whisper_transcribe(
+            wav_path, cancel_event=stop_event
+        )
     finally:
         try:
             os.remove(wav_path)
@@ -637,7 +657,7 @@ def _transcription_loop(stop_event, commits):
                 break
 
             try:
-                text = _transcribe_commit(commit)
+                text = _transcribe_commit(commit, stop_event)
             except Exception as error:  # noqa: BLE001 - count, log type only
                 _consecutive_failures += 1
                 failures = _consecutive_failures
@@ -798,7 +818,7 @@ def start():
     """
     global _worker, _transcription, _stop_event, _assembler, _commits
     global _capture, _active, _commits_dropped, _transcript
-    global _previous_text, _consecutive_failures
+    global _transcript_session, _previous_text, _consecutive_failures
     global _calibration_windows, _calibration_rejected
     global _calibration_usable, _calibration_contaminated
 
@@ -869,6 +889,7 @@ def start():
         _calibration_usable = calibration.usable
         _calibration_contaminated = calibration.contaminated
         _transcript = []
+        _transcript_session += 1
         _previous_text = ""
         _consecutive_failures = 0
 
@@ -924,10 +945,11 @@ def stop():
 
     Order: set stop_event -> transcription thread cancels/finishes and
     exits -> worker flushes pending speech and exits -> external joins
-    -> release capture. While the transcription thread is alive its
-    in-flight Whisper call is cancelled (whisper_engine resets the flag
-    before the next spawn), so stop never waits out a full inference.
-    The commits queue survives until the next start(), so audio
+    -> release capture. The stop event is passed into the engine as
+    cancel_event, so while the transcription thread is alive its
+    in-flight Whisper call is killed there (per-invocation
+    cancellation, M1) and stop never waits out a full inference. The
+    commits queue survives until the next start(), so audio
     committed at shutdown stays readable. If a join times out, session
     state is kept (stop() may be retried) rather than risking a second
     worker or a second transcription thread.
@@ -946,7 +968,6 @@ def stop():
         if transcription is not None:
             deadline = time.monotonic() + TRANSCRIPTION_JOIN_TIMEOUT
             while transcription.is_alive() and time.monotonic() < deadline:
-                whisper_engine.cancel_requested = True
                 transcription.join(timeout=CANCEL_POLL_INTERVAL)
             if transcription.is_alive():
                 logger.error(
@@ -1000,6 +1021,67 @@ def get_transcript():
     transcript survives stop() until the next start() resets it.
     """
     return list(_transcript)
+
+
+def create_cursor():
+    """Consumer API: fresh cursor positioned at the transcript head.
+
+    Returns a (session_id, index) cursor for read_cursor(): session_id
+    identifies the session whose transcript is currently stored and
+    index 0 is the oldest unread segment. A cursor created before
+    start() still works - read_cursor() detects the stale session id
+    and realigns it.
+    """
+    return (_transcript_session, 0)
+
+
+def read_cursor(cursor):
+    """Consumer API: read exactly one segment at the cursor position.
+
+    Returns ((session_id, next_index), text) for the next non-empty
+    segment, or None when no unread segment is available. Ordered and
+    exactly-once: advancement happens only through the returned cursor,
+    so re-reading with an unchanged cursor yields nothing new, and an
+    empty string is skipped, never returned.
+
+    Session boundary: when the cursor's session_id no longer matches
+    the stored session (start() reset the transcript), the cursor
+    realigns to (current_session, 0) and stale unread old-session
+    segments are dropped - a segment is returned only if the session
+    id stayed unchanged for the whole read, otherwise the read
+    restarts on the current session. Text goes to the caller only;
+    nothing about it is logged. Single-list reads: appends are atomic
+    list operations and start() assigns fresh state as a unit, so a
+    racing reader either finishes on the old session or restarts on
+    the new one.
+    """
+    session, index = cursor
+
+    while True:
+        current_session = _transcript_session
+
+        if session != current_session:
+            session = current_session
+            index = 0
+
+        transcript = _transcript
+        text = None
+
+        while index < len(transcript):
+            candidate = transcript[index]
+            index += 1
+
+            if candidate:
+                text = candidate
+                break
+
+        if _transcript_session != session:
+            continue
+
+        if text is None:
+            return None
+
+        return (session, index), text
 
 
 def stats():

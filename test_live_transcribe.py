@@ -36,6 +36,11 @@ Covers the amended 7b contract:
   speech commits before live speech, exactly once); session tests patch
   CALIBRATION_TARGET_WINDOWS to 0, so their timing and floor
   threshold are unchanged
+- 7c.1: transcript cursor API - create_cursor()/read_cursor() give
+  ordered exactly-once segment reads, session-boundary detection with
+  stale-cursor realign to (session, 0), stale unread segments dropped
+  across start(), and empty strings never exposed, all over the single
+  existing _transcript store (get_transcript() unchanged)
 - scope: live_transcribe may import live_capture, logger, and
   whisper_engine, and nothing from the forbidden production set (no
   audio, no config, no output, no main)
@@ -629,16 +634,17 @@ def wait_until(predicate, timeout=5.0):
 class FakeWhisperEngine:
     """whisper_engine contract double: one-shot call, no subprocess.
 
-    Mimics the engine's cancellation lifecycle: cancel_requested is
-    reset at the entry of every call and observed while a gated call is
-    blocked, exactly where the real engine observes it between reset
-    and process completion. It records what the real engine would have
-    seen (WAV existence, header fields, first sample, path) so tests
-    can prove the file is valid while it runs and gone afterwards.
+    Mimics the engine's per-invocation cancellation (M1, 7c.3): the
+    cancel_event given by the caller is polled while a gated call is
+    blocked, exactly where the real engine polls it between spawn and
+    process completion; cancel_event=None (the F8 contract) never
+    cancels. There is no global cancellation flag. It records what the
+    real engine would have seen (WAV existence, header fields, first
+    sample, path) so tests can prove the file is valid while it runs
+    and gone afterwards.
     """
 
     def __init__(self):
-        self.cancel_requested = False
         self.default_result = "committed transcript"
         self.results = queue.Queue()
         self.calls = []
@@ -646,9 +652,7 @@ class FakeWhisperEngine:
         self.gate.set()
         self.entered = threading.Event()
 
-    def whisper_transcribe(self, wav_path):
-        self.cancel_requested = False
-
+    def whisper_transcribe(self, wav_path, cancel_event=None):
         record = {
             "wav_path": wav_path,
             "wav_exists": os.path.exists(wav_path),
@@ -671,7 +675,7 @@ class FakeWhisperEngine:
         if not self.gate.is_set():
             self.entered.set()
             while not self.gate.wait(0.02):
-                if self.cancel_requested:
+                if cancel_event is not None and cancel_event.is_set():
                     record["cancelled"] = True
                     return ""
 
@@ -1820,6 +1824,141 @@ class CalibrationRobustnessTests(_CalibrationSessionBase):
 
         lt.stop()
         self.assertEqual(lt.stats()["transcript_segments"], 2)
+
+
+class TranscriptCursorTests(unittest.TestCase):
+    """7c.1: ordered exactly-once cursor over the session transcript.
+
+    Segments are appended directly for deterministic cursor semantics;
+    one test crosses a real session boundary via start(). The session
+    runs against a faked capture with calibration disabled: no audio
+    stack, no microphone, no Whisper, no output code.
+    """
+
+    def setUp(self):
+        lt.stop()
+
+        # The transcript survives stop(); isolate each test's store.
+        lt._transcript = []
+
+        calibration_patcher = mock.patch.object(
+            lt, "CALIBRATION_TARGET_WINDOWS", 0
+        )
+        calibration_patcher.start()
+        self.addCleanup(calibration_patcher.stop)
+
+        capture_patcher = mock.patch.object(
+            lt, "_import_capture", return_value=FakeLiveCapture()
+        )
+        capture_patcher.start()
+        self.addCleanup(capture_patcher.stop)
+
+        logger_patcher = mock.patch.object(lt, "logger")
+        self.logger_mock = logger_patcher.start()
+        self.addCleanup(logger_patcher.stop)
+
+        self.addCleanup(lt.stop)
+
+    def append_segments(self, *segments):
+        for segment in segments:
+            lt._transcript.append(segment)
+
+    def drain(self, cursor, limit=50):
+        seen = []
+        for _ in range(limit):
+            result = lt.read_cursor(cursor)
+            if result is None:
+                break
+            cursor, text = result
+            seen.append(text)
+        return cursor, seen
+
+    def test_cursor_reads_segments_in_order(self):
+        self.append_segments("segment1", "segment2", "segment3")
+
+        cursor = lt.create_cursor()
+        cursor, seen = self.drain(cursor)
+
+        self.assertEqual(seen, ["segment1", "segment2", "segment3"])
+        self.assertEqual(cursor[0], lt.create_cursor()[0])
+        self.assertEqual(cursor[1], 3)
+
+    def test_cursor_read_is_exactly_once(self):
+        self.append_segments("only segment")
+
+        cursor = lt.create_cursor()
+        result = lt.read_cursor(cursor)
+        self.assertIsNotNone(result)
+        cursor, text = result
+        self.assertEqual(text, "only segment")
+
+        self.assertIsNone(lt.read_cursor(cursor))
+        self.assertIsNone(lt.read_cursor(cursor))
+
+    def test_concurrent_append_and_read_keeps_order_without_duplicates(self):
+        expected = [f"segment {index}" for index in range(100)]
+
+        def produce():
+            for segment in expected:
+                lt._transcript.append(segment)
+
+        producer = threading.Thread(target=produce, daemon=True)
+        producer.start()
+
+        cursor = lt.create_cursor()
+        seen = []
+        deadline = time.monotonic() + 5.0
+        while len(seen) < len(expected) and time.monotonic() < deadline:
+            result = lt.read_cursor(cursor)
+            if result is None:
+                time.sleep(0.001)
+                continue
+            cursor, text = result
+            seen.append(text)
+
+        producer.join(timeout=5.0)
+        self.assertFalse(producer.is_alive())
+        self.assertEqual(seen, expected)
+        self.assertEqual(len(set(seen)), len(expected))
+
+    def test_session_reset_realigns_cursor_and_drops_stale_segments(self):
+        self.append_segments("old1", "old2")
+        cursor = lt.create_cursor()
+        old_session = cursor[0]
+
+        result = lt.read_cursor(cursor)
+        self.assertIsNotNone(result)
+        cursor, text = result
+        self.assertEqual(text, "old1")
+
+        ok, reason = lt.start()
+        self.assertTrue(ok, reason)
+        self.assertNotEqual(lt.create_cursor()[0], old_session)
+
+        self.assertIsNone(lt.read_cursor(cursor))
+
+        lt._transcript.append("new1")
+        cursor, seen = self.drain(cursor)
+        self.assertEqual(seen, ["new1"])
+        self.assertEqual(cursor[0], lt.create_cursor()[0])
+        self.assertNotIn("old2", seen)
+
+    def test_empty_segments_never_exposed(self):
+        self.append_segments("", "alpha", "", "beta", "")
+
+        cursor = lt.create_cursor()
+        first = lt.read_cursor(cursor)
+        self.assertIsNotNone(first)
+        cursor, text = first
+        self.assertEqual(text, "alpha")
+
+        second = lt.read_cursor(cursor)
+        self.assertIsNotNone(second)
+        cursor, text = second
+        self.assertEqual(text, "beta")
+
+        self.assertIsNone(lt.read_cursor(cursor))
+        self.assertEqual(cursor[1], 4)
 
 
 if __name__ == "__main__":
