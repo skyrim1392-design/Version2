@@ -289,6 +289,86 @@ teardown completed cleanly with no orphaned Whisper child.
 
 ---
 
+## 7d.3 endurance harness run — 2026-10-07
+
+Harness: `real_mic_validation_7d3.py` (untracked, local-only per
+D11), synthetic/hardware-free seams (`FakeLiveCapture`,
+`FakeWhisperEngine`, `DeliveryRecorder`), spec in
+`docs/7D3_DESIGN.md`.
+
+Profile run:
+
+- soak: 60 s continuous live session
+- lifecycle: 20 start/stop cycles
+- contention: 10 F8/live cycles
+- toggle: 20 ON/OFF cycles
+- shutdown under load: 4 cycles (2 live-active, 2 fake-F8-busy with
+  `QUIESCE_TIMEOUT=0.5`, `terminate_outstanding` observed 2x)
+
+Results: **26/26 PASS.**
+
+### Full soak — 2026-10-08 (`--full`)
+
+- soak: **1800 s** (30 min) continuous live session
+- lifecycle: **100** start/stop cycles
+- contention: **50** F8/live cycles (F8 blocked 50/50 while live
+  active, allowed 50/50 after stop)
+- toggle: **100** ON/OFF cycles
+- shutdown under load: **10/10** clean (`terminate_outstanding`
+  observed on the fake-F8-busy timeout path)
+- Checks: **26/26 PASS**
+- Threads: flat 5 during soak (3 live workers), 1 at finish —
+  no monotonic growth
+- Whisper children: 0 throughout, 0 after final teardown
+- Mic ownership: `"live"` while active, `None` after every stop
+- Deliveries: 1 (synthetic tone segment; rate not a pass/fail
+  criterion per design)
+- `config.json` SHA-256: unchanged across the full run
+- Final teardown equivalent to baseline:
+  `live_status=LIVE_IDLE`, `mic_owner=None`, `whisper_child=0`,
+  0 live threads, F8 flags clear
+- Regression: full suite **152/152 OK** (17.1 s); ruff clean on the
+  harness
+- Artifacts: `%TEMP%\opencode\7d3_endurance_results.json`,
+  `%TEMP%\opencode\7d3_full_out.txt`
+
+Condensed-profile details retained from the earlier run below.
+
+Environment notes: the harness is synthetic; lack of automated
+microphone injection is a documented validation limitation per the
+design, not a failed test. Real-mic corroboration remains in the
+7c/7d smoke harnesses.
+
+Status: **7d.3 production endurance evidence: PASS — synthetic
+profile, 30-minute soak + lifecycle/contention/toggle/shutdown
+stress. Physical unplug/sleep-resume endurance remains unproven.**
+
+Qualification: this is a synthetic endurance profile. It does **not**
+replace a physical 30-minute test involving actual microphone
+unplug/replug, Windows sleep/resume, audio-device
+disappearance/reappearance, long-duration real speech, or real
+clipboard/application delivery over the entire soak. The 7d.1
+physical smoke plus this 7d.3 synthetic endurance run together
+provide good evidence, but those environmental cases remain outside
+the demonstrated 30-minute soak.
+
+- Checks: **26/26 PASS**
+- Deliveries during soak: 1 (single synthetic tone segment — rate not
+  a pass/fail criterion per design)
+- Threads: flat plateau (5 live-session threads during soak, 1 after)
+- Mic ownership: `"live"` while active (claimed/released by the
+  harness-wrapped capture seam), `None` after every stop
+- Whisper children: 0 throughout, 0 after teardown
+- `config.json` SHA-256: unchanged across the whole run
+- Final teardown: `live_status=LIVE_IDLE`, 0 live threads,
+  `mic_owner=None`, `whisper_child=0`, F8 flags clear
+- Regression: full suite **152/152 OK** (17.1 s); ruff clean on the
+  harness
+- Artifacts: `%TEMP%\opencode\7d3_endurance_results.json`,
+  `%TEMP%\opencode\7d3_run2.txt`
+
+---
+
 ## Checkpoint rule
 
 **7d.1:** satisfied — tests green, manual smoke PASS, `dc5c4aa`
