@@ -13,9 +13,15 @@ thread of an active session.
 
 Pipeline:
 
-    start(): CALIBRATION_DURATION_S ambient calibration window
-        -> threshold = max(ABSOLUTE_FLOOR, ambient_rms * THRESHOLD_MULTIPLIER)
+    start(): robust ambient calibration (step 3b)
+        -> up to CALIBRATION_TARGET_WINDOWS x CALIBRATION_DURATION_S
+           windows, hard-capped at CALIBRATION_MAX_DURATION_S
+        -> outlier windows (RMS > CALIBRATION_OUTLIER_RATIO x median)
+           rejected, ambient = median of retained windows
+        -> threshold = max(ABSOLUTE_FLOOR, ambient * THRESHOLD_MULTIPLIER)
         -> UtteranceAssembler(energy_threshold=threshold)
+    calibration chunks (chronological, replayed exactly once)
+        -> UtteranceAssembler -> commit queue (below)
     live_capture.read_chunk()
         -> LiveTranscribeWorker (step 2)
         -> UtteranceAssembler (below)
@@ -73,6 +79,14 @@ Locked invariants:
    cannot leak into the next transcription. whisper_engine.py itself is
    never modified by 7b.
 
+5. Calibration replay (step 3b): every chunk read during calibration is
+   buffered and replayed through the normal UtteranceAssembler path -
+   exactly once, in chronological order, before the worker reads any
+   live chunk. Ownership is unchanged: one assembler per session, fed
+   only from the worker thread; _calibrate() never touches the
+   assembler. Replay must not gate on stop_event mid-stream (the flush
+   contract in the worker exit paths still applies afterwards).
+
 Privacy contract: no transcript text enters the logger, directly or
 indirectly. Logging is limited to reason/timing/length; exceptions are
 reported by type name only, never message text. test_live_transcribe.py
@@ -99,28 +113,42 @@ text is logged; only reason, duration, character count, and exception
 type names. Unit tests: test_live_transcribe.py (faked capture and a
 faked whisper engine: no microphone, no model, no subprocess).
 
-Step 3a content: adaptive energy gate. start() samples an ambient
-window of CALIBRATION_DURATION_S through the capture after the capture
-is acquired and before any thread is spawned, and derives the session
-threshold as max(ABSOLUTE_FLOOR, ambient_rms * THRESHOLD_MULTIPLIER);
-the UtteranceAssembler receives that value instead of a fixed
-constant. ambient_rms is plain RMS over the collected int16 samples -
-the same energy the assembler compares per 20 ms frame, and the window
-is frame-aligned, so calibration and gating measure one quantity. The
-calibration window is consumed here: it never reaches the assembler,
-the commit queue, or the transcript. Diagnostics are count-only: the
-log line "Live transcription calibration: ambient_rms=..., threshold="
-plus stats()["energy_threshold"]; no raw audio, sample content, or
-exception payload. Failure modes: the window cannot be filled before
-the deadline ("calibration timeout") and a capture read error
+Step 3a/3b content: adaptive energy gate (3a, 7b.3a) made robust by the
+locked calibration design (3b, 7b.4). 7b.4 work items: 1 = robust
+median-of-retained estimator, 2 = bounded extension to the hard cap,
+3 = calibration_contaminated flag, 4 = calibration replay buffer,
+5 = replay ownership invariant (invariant 5). start() samples windows
+of CALIBRATION_DURATION_S through the capture after the capture is
+acquired and before any thread is spawned, targeting
+CALIBRATION_TARGET_WINDOWS usable windows (about 3 s) within a hard
+cap of CALIBRATION_MAX_DURATION_S (about 5 s). Windows are classified
+against the median of the sampled set: an RMS above
+CALIBRATION_OUTLIER_RATIO x median is a clear high-energy outlier and
+is rejected (synthetic tests pin the boundary); ambient_rms is the
+median of the retained windows and the threshold is
+max(ABSOLUTE_FLOOR, ambient_rms * THRESHOLD_MULTIPLIER) - the
+UtteranceAssembler receives that value. ambient_rms and frame RMS are
+the same quantity (plain RMS over int16 samples, frame-aligned). At
+the hard cap - or on a capture stall after at least one window was
+sampled - a best-available estimate is used and
+calibration_contaminated=True is recorded (diagnostic only: fewer
+than CALIBRATION_TARGET_WINDOWS usable windows); a contaminated but
+usable calibration still starts the session. Calibration audio is
+never discarded: every chunk is replayed through the assembler by the
+worker, in order, before live audio (invariant 5). Diagnostics are
+count-only: the log line "Live transcription calibration:
+windows=..., rejected=..., usable=..., ambient_rms=..., threshold="
+plus stats()["energy_threshold"], stats()["calibration_windows"],
+["calibration_rejected"], ["calibration_usable"],
+["calibration_contaminated"]; no raw audio, sample content, or
+exception payload. Failure modes: no window sampled before the
+deadline ("calibration timeout") and a capture read error
 ("calibration failed"); both release the capture and leave no session
-state. Deliberately absent from 7b.3a: quiet-window validation,
-retry loops, spectral or neural VAD, automatic gain control, and
-normalization. If the initial window contains speech the derived
-threshold inflates toward the speech level; that accepted limitation
-is pinned by a synthetic test and may gain validation or retry in a
-later step. Unit tests: test_live_transcribe.py (synthetic windows
-against a faked capture).
+state. Deliberately absent from 7b.4: quiet-window validation, retry
+loops, spectral or neural VAD, automatic gain control, and
+normalization; THRESHOLD_MULTIPLIER stays 1.75 unless measurement
+demands re-derivation (7b.4 D4). Unit tests: test_live_transcribe.py
+(synthetic windows against a faked capture).
 
 Worker exit contract (no worker-thread self-join anywhere):
     - stop() sets stop_event; the worker flushes pending speech into
@@ -164,6 +192,9 @@ MIN_DEDUPE_OVERLAP = 12
 ABSOLUTE_FLOOR = 500
 CALIBRATION_DURATION_S = 1.0
 CALIBRATION_TIMEOUT_SLACK_S = 2.0
+CALIBRATION_TARGET_WINDOWS = 3
+CALIBRATION_MAX_DURATION_S = 5.0
+CALIBRATION_OUTLIER_RATIO = 2.0
 THRESHOLD_MULTIPLIER = 1.75
 
 SILENCE_GATE_SAMPLES = SAMPLE_RATE * SILENCE_GATE_MS // 1000
@@ -210,6 +241,40 @@ class Commit:
     @property
     def duration_s(self):
         return self.length_samples / SAMPLE_RATE
+
+
+@dataclass(frozen=True, eq=False)
+class Calibration:
+    """Result of the robust ambient calibration (step 3b).
+
+    ok/reason: session-start verdict; only a capture stall before the
+        first usable window fails ("calibration timeout").
+    threshold: derived session gate, max(ABSOLUTE_FLOOR,
+        ambient_rms * THRESHOLD_MULTIPLIER).
+    ambient_rms: median RMS of the retained (non-outlier) windows.
+    windows: total 1-second windows sampled.
+    rejected: windows discarded as clear high-energy outliers.
+    usable: retained windows after the final classification.
+    contaminated: True when fewer than CALIBRATION_TARGET_WINDOWS
+        usable windows existed at the hard cap (work item 3); a
+        diagnostic only - a contaminated-but-usable calibration still
+        starts the session.
+    replay: every calibration chunk, chronological, int16 mono. The
+        worker feeds these through the normal UtteranceAssembler before
+        reading live audio: calibration audio is retained, never
+        discarded. Count/diagnostic fields only here - no audio content
+        is ever logged.
+    """
+
+    ok: bool
+    reason: str
+    threshold: int
+    ambient_rms: float
+    windows: int
+    rejected: int
+    usable: int
+    contaminated: bool
+    replay: tuple
 
 
 def dedupe_prefix(previous, new):
@@ -417,6 +482,10 @@ _commits = None
 _capture = None
 _active = False
 _commits_dropped = 0
+_calibration_windows = 0
+_calibration_rejected = 0
+_calibration_usable = 0
+_calibration_contaminated = False
 _transcript = []
 _previous_text = ""
 _consecutive_failures = 0
@@ -465,8 +534,16 @@ def _offer_commits(commits, commit):
         )
 
 
-def _worker_loop(stop_event, assembler, commits, capture):
+def _worker_loop(stop_event, assembler, commits, capture, replay=()):
     """Consume capture chunks into the assembler until stopped.
+
+    Step 3b replay contract (work item 5): `replay` holds every
+    calibration chunk in capture order; the worker feeds them through
+    the assembler exactly once, before reading any live chunk, so
+    calibration audio is never discarded. Replay is not gated on
+    stop_event (at most CALIBRATION_MAX_DURATION_S of audio, processed
+    before the first read); the stop/flush exit paths below are
+    unchanged.
 
     Exit paths (worker never joins itself):
     - stop_event set: flush pending speech, terminate
@@ -477,6 +554,10 @@ def _worker_loop(stop_event, assembler, commits, capture):
     global _active
 
     try:
+        for chunk in replay:
+            for commit in assembler.feed(chunk):
+                _offer_commits(commits, commit)
+
         while not stop_event.is_set():
             chunk = capture.read_chunk(timeout=WORKER_POLL_TIMEOUT)
             if chunk is None:
@@ -598,62 +679,128 @@ def _transcription_loop(stop_event, commits):
         )
 
 
-def _calibrate(capture):
-    """Sample an ambient window and derive the session energy threshold.
+def _classify_calibration(values):
+    """Classify sampled calibration windows against the median center.
 
-    Reads whole capture chunks until CALIBRATION_DURATION_S of audio
-    has been collected, then computes plain RMS over the collected
-    int16 samples - the same energy the UtteranceAssembler compares
-    per 20 ms frame (the window is frame-aligned, so both measure the
-    same quantity). The session threshold is
-    max(ABSOLUTE_FLOOR, ambient_rms * THRESHOLD_MULTIPLIER). The
-    window is consumed here: it never reaches the assembler, the
-    commit queue, or the transcript. Returns
-    (ok, reason, threshold, ambient_rms); the only failure is a window
-    that cannot be filled before the deadline. A CALIBRATION_DURATION_S
-    of zero skips sampling and yields the floor threshold, which keeps
-    synthetic session tests deterministic.
+    Work item 1 (7b.4 D1): the robust center is the median of the
+    windows sampled so far; a window whose RMS exceeds
+    CALIBRATION_OUTLIER_RATIO x that center is a clear high-energy
+    outlier and is rejected. The boundary is inclusive: a window
+    exactly at the limit is retained. Returns (retained, rejected
+    count). The ratio value itself is not derived here - synthetic
+    tests establish it from representative cases (for example the
+    measured [837, 958, 2899] triple retains [837, 958]).
+
+    Pure: no capture, no clock, no logging.
     """
-    target = int(CALIBRATION_DURATION_S * SAMPLE_RATE)
-    if target <= 0:
-        return True, "calibrated", ABSOLUTE_FLOOR, 0.0
+    center = float(np.median(values))
+    limit = CALIBRATION_OUTLIER_RATIO * center
+    retained = [value for value in values if value <= limit]
+    return retained, len(values) - len(retained)
 
-    collected = []
-    total = 0
+
+def _calibrate(capture):
+    """Robust ambient calibration (step 3b, 7b.4 design D1/D2).
+
+    Reads whole capture chunks into CALIBRATION_DURATION_S windows
+    until CALIBRATION_TARGET_WINDOWS usable windows exist (about 3 s)
+    or the hard cap CALIBRATION_MAX_DURATION_S is reached (about 5 s,
+    best-available estimate + contaminated flag, D2, work items 2/3).
+    Each sampled window is classified by _classify_calibration (work
+    item 1): RMS above CALIBRATION_OUTLIER_RATIO x median is a clear
+    high-energy outlier and is rejected (the boundary is pinned by
+    synthetic tests, not asserted here). ambient is the median of the
+    retained windows; threshold is
+    max(ABSOLUTE_FLOOR, ambient * THRESHOLD_MULTIPLIER).
+
+    Returns a Calibration. Every chunk read - including chunks holding
+    rejected windows - is kept in chronological order in
+    Calibration.replay for the worker to feed through the assembler
+    before live audio (invariant 5, work item 4/5): calibration audio
+    is retained, never discarded, and this function never touches the
+    assembler (single worker ownership). The only failure is the
+    deadline passing before a single window can be filled
+    ("calibration timeout"); a deadline reached with one or more
+    windows falls through to the best-available estimate and the
+    contaminated flag (work items 2/3). CALIBRATION_TARGET_WINDOWS or
+    CALIBRATION_DURATION_S of zero skips sampling and yields the floor
+    threshold, which keeps synthetic session tests deterministic.
+    """
+    target = int(CALIBRATION_TARGET_WINDOWS)
+    window_samples = int(CALIBRATION_DURATION_S * SAMPLE_RATE)
+    if target <= 0 or window_samples <= 0:
+        return Calibration(
+            True, "calibrated", ABSOLUTE_FLOOR, 0.0, 0, 0, 0, False, ()
+        )
+
+    max_windows = max(
+        target, round(CALIBRATION_MAX_DURATION_S / CALIBRATION_DURATION_S)
+    )
     deadline = (
         time.monotonic()
-        + CALIBRATION_DURATION_S
+        + CALIBRATION_MAX_DURATION_S
         + CALIBRATION_TIMEOUT_SLACK_S
     )
+    replay = []
+    rms_values = []
+    pending = None
 
-    while total < target:
+    while True:
+        if rms_values:
+            retained, _ = _classify_calibration(rms_values)
+            if len(retained) >= target or len(rms_values) >= max_windows:
+                break
         if time.monotonic() > deadline:
-            return False, "calibration timeout", 0, 0.0
+            if not rms_values:
+                return Calibration(
+                    False, "calibration timeout", 0, 0.0, 0, 0, 0, False, ()
+                )
+            break
         chunk = capture.read_chunk(timeout=WORKER_POLL_TIMEOUT)
         if chunk is None:
             continue
-        collected.append(chunk)
-        total += len(chunk)
+        replay.append(chunk)
+        pending = chunk if pending is None else np.concatenate([pending, chunk])
+        while len(pending) >= window_samples:
+            window = pending[:window_samples]
+            pending = pending[window_samples:]
+            rms = float(np.sqrt(np.mean(window.astype(np.float64) ** 2)))
+            rms_values.append(rms)
+            if len(rms_values) >= max_windows:
+                break
 
-    signal = np.concatenate(collected)
-    ambient_rms = float(np.sqrt(np.mean(signal.astype(np.float64) ** 2)))
-    threshold = int(max(ABSOLUTE_FLOOR, ambient_rms * THRESHOLD_MULTIPLIER))
-    return True, "calibrated", threshold, ambient_rms
+    retained, rejected = _classify_calibration(rms_values)
+    ambient = float(np.median(retained))
+    threshold = int(max(ABSOLUTE_FLOOR, ambient * THRESHOLD_MULTIPLIER))
+    return Calibration(
+        True,
+        "calibrated",
+        threshold,
+        ambient,
+        len(rms_values),
+        rejected,
+        len(retained),
+        len(retained) < target,
+        tuple(replay),
+    )
 
 
 def start():
     """Start a live transcription session. Returns (ok, reason).
 
-    Acquires the capture session, calibrates the ambient energy window
-    (step 3a), resets the commit queue and the transcript buffer, and
-    spawns LiveTranscribeWorker plus LiveTranscribeTranscription.
-    Atomic under _lock: any calibration or spawn failure releases the
-    capture, leaves no session state behind, and returns a plain
-    reason.
+    Acquires the capture session, runs the robust ambient calibration
+    (step 3b), resets the commit queue and the transcript buffer, and
+    spawns LiveTranscribeWorker plus LiveTranscribeTranscription. The
+    calibration chunks are handed to the worker for replay through the
+    assembler before any live audio. Atomic under _lock: any
+    calibration or spawn failure releases the capture, leaves no
+    session state behind, and returns a plain reason.
     """
     global _worker, _transcription, _stop_event, _assembler, _commits
     global _capture, _active, _commits_dropped, _transcript
     global _previous_text, _consecutive_failures
+    global _calibration_windows, _calibration_rejected
+    global _calibration_usable, _calibration_contaminated
 
     with _lock:
         if _active:
@@ -677,7 +824,7 @@ def start():
             return False, reason
 
         try:
-            calibrated, reason, threshold, ambient_rms = _calibrate(capture)
+            calibration = _calibrate(capture)
         except Exception as error:  # noqa: BLE001 - release capture, keep (ok, reason)
             capture.stop()
             logger.error(
@@ -686,14 +833,16 @@ def start():
             )
             return False, "calibration failed"
 
-        if not calibrated:
+        if not calibration.ok:
             capture.stop()
-            logger.warning(f"Live transcription refused: {reason}")
-            return False, reason
+            logger.warning(f"Live transcription refused: {calibration.reason}")
+            return False, calibration.reason
 
         logger.info(
-            f"Live transcription calibration: ambient_rms={ambient_rms:.1f}, "
-            f"threshold={threshold}"
+            f"Live transcription calibration: windows={calibration.windows}, "
+            f"rejected={calibration.rejected}, usable={calibration.usable}, "
+            f"ambient_rms={calibration.ambient_rms:.1f}, "
+            f"threshold={calibration.threshold}"
         )
 
         if _commits is not None:
@@ -704,7 +853,9 @@ def start():
                     f"previous session"
                 )
 
-        assembler = UtteranceAssembler(energy_threshold=threshold)
+        assembler = UtteranceAssembler(
+            energy_threshold=calibration.threshold
+        )
         commits = queue.Queue(maxsize=COMMIT_QUEUE_SIZE)
         stop_event = threading.Event()
 
@@ -713,6 +864,10 @@ def start():
         _commits = commits
         _stop_event = stop_event
         _commits_dropped = 0
+        _calibration_windows = calibration.windows
+        _calibration_rejected = calibration.rejected
+        _calibration_usable = calibration.usable
+        _calibration_contaminated = calibration.contaminated
         _transcript = []
         _previous_text = ""
         _consecutive_failures = 0
@@ -723,7 +878,13 @@ def start():
         try:
             worker = threading.Thread(
                 target=_worker_loop,
-                args=(stop_event, assembler, commits, capture),
+                args=(
+                    stop_event,
+                    assembler,
+                    commits,
+                    capture,
+                    calibration.replay,
+                ),
                 name="LiveTranscribeWorker",
                 daemon=True,
             )
@@ -861,4 +1022,8 @@ def stats():
             if _assembler is not None
             else ABSOLUTE_FLOOR
         ),
+        "calibration_windows": _calibration_windows,
+        "calibration_rejected": _calibration_rejected,
+        "calibration_usable": _calibration_usable,
+        "calibration_contaminated": _calibration_contaminated,
     }

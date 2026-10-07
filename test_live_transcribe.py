@@ -1,4 +1,4 @@
-"""Unit tests for live_transcribe (Phase 7b, steps 1-3 and 3a).
+"""Unit tests for live_transcribe (Phase 7b, steps 1-3, 3a, 3b).
 
 Covers the amended 7b contract:
 
@@ -18,13 +18,24 @@ Covers the amended 7b contract:
   assembler split, three-consecutive-failure auto-stop, cancel during
   stop, commits surviving stop, memory-only get_transcript()
 - step 3a: adaptive calibration - the threshold derived from a
-  synthetic ambient window, speech above/below that derived threshold,
+  synthetic ambient, speech above/below that derived threshold,
   silence gating against it, timeout and read-error failures that
-  release the capture, the calibration window consumed before the
-  worker starts, threshold inflation when the window contains speech,
-  and stats()["energy_threshold"]; session tests patch
-  CALIBRATION_DURATION_S to 0, so their timing and floor threshold
-  are unchanged
+  release the capture, threshold inflation when every window is
+  speech, and stats()["energy_threshold"]
+- step 3b (7b.4): calibration robustness - the locked D1-D5 design:
+  median-of-retained estimator with a boundary established by
+  synthetic tests from representative measured cases, including
+  [837, 958, 2899] -> retained [837, 958] (D1, work item 1), bounded
+  extension up to the hard cap (D2, work item 2) with the cap marking
+  calibration_contaminated while the session still starts (D3, work
+  item 3),   M=1.75 unchanged with its evidence recorded below (D4),
+  and calibration audio replayed exactly once through the normal
+  assembler before live audio (work items 4-5); acceptance invariants:
+  threshold >= ABSOLUTE_FLOOR for every calibration input (zero-ambient
+  floor clamp, all-elevated stability) and replay ordering (calibration
+  speech commits before live speech, exactly once); session tests patch
+  CALIBRATION_TARGET_WINDOWS to 0, so their timing and floor
+  threshold are unchanged
 - scope: live_transcribe may import live_capture, logger, and
   whisper_engine, and nothing from the forbidden production set (no
   audio, no config, no output, no main)
@@ -240,6 +251,9 @@ class ThresholdAlignmentTests(unittest.TestCase):
         self.assertEqual(lt.THRESHOLD_MULTIPLIER, 1.75)
         self.assertEqual(lt.CALIBRATION_DURATION_S, 1.0)
         self.assertEqual(lt.CALIBRATION_TIMEOUT_SLACK_S, 2.0)
+        self.assertEqual(lt.CALIBRATION_TARGET_WINDOWS, 3)
+        self.assertEqual(lt.CALIBRATION_MAX_DURATION_S, 5.0)
+        self.assertEqual(lt.CALIBRATION_OUTLIER_RATIO, 2.0)
 
 
 class UtteranceAssemblerTests(unittest.TestCase):
@@ -681,7 +695,7 @@ class LiveTranscribeSessionTests(unittest.TestCase):
         self.engine = FakeWhisperEngine()
 
         calibration_patcher = mock.patch.object(
-            lt, "CALIBRATION_DURATION_S", 0
+            lt, "CALIBRATION_TARGET_WINDOWS", 0
         )
         calibration_patcher.start()
         self.addCleanup(calibration_patcher.stop)
@@ -1143,13 +1157,12 @@ class LiveTranscribeSessionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
 
-class AdaptiveCalibrationTests(unittest.TestCase):
-    """Step 3a: calibration runs against synthetic ambient windows.
+class _CalibrationSessionBase(unittest.TestCase):
+    """Shared fixture for the calibration classes (steps 3a and 3b).
 
-    CALIBRATION_DURATION_S is NOT patched here: start() really samples
-    the faked capture for the production window length (one
-    CHUNK_SAMPLES chunk), and the derived threshold must follow the
-    pushed ambient level exactly.
+    Faked capture, faked whisper engine, mocked logger; calibration
+    constants are NOT patched here, so start() really samples the
+    faked capture through the production estimator.
     """
 
     def setUp(self):
@@ -1174,9 +1187,18 @@ class AdaptiveCalibrationTests(unittest.TestCase):
 
         self.addCleanup(lt.stop)
 
-    def push_ambient(self, level):
+    def push_ambient(self, level, windows=None):
+        """Queue CALIBRATION_TARGET_WINDOWS clean windows of `level`.
+
+        Override `windows` to drive the extension/cap paths (3b); the
+        default stops the estimator at the target with no extension.
+        """
+        count = (
+            lt.CALIBRATION_TARGET_WINDOWS if windows is None else windows
+        )
         samples = int(lt.CALIBRATION_DURATION_S * lt.SAMPLE_RATE)
-        self.capture.push(tone(samples, level=level))
+        for _ in range(count):
+            self.capture.push(tone(samples, level=level))
 
     def park_transcriber_above_threshold(self):
         """Block the transcription thread inside one Whisper call.
@@ -1194,6 +1216,18 @@ class AdaptiveCalibrationTests(unittest.TestCase):
             wait_until(lambda: self.engine.entered.is_set()),
             "transcription thread never reached the Whisper call",
         )
+
+    def calibration_log(self):
+        info = [str(call) for call in self.logger_mock.info.call_args_list]
+        return [
+            message
+            for message in info
+            if "Live transcription calibration:" in message
+        ]
+
+
+class AdaptiveCalibrationTests(_CalibrationSessionBase):
+    """Step 3a: calibration runs against synthetic ambient windows."""
 
     def test_quiet_calibration_derives_threshold_from_ambient(self):
         self.push_ambient(1200)
@@ -1274,8 +1308,12 @@ class AdaptiveCalibrationTests(unittest.TestCase):
         lt.stop()
 
     def test_calibration_timeout_releases_capture(self):
+        # Stall before the FIRST window: the only deadline failure
+        # (work item 2 - with one or more windows the deadline instead
+        # yields the best-available estimate, pinned by
+        # test_stall_with_partial_windows_starts_best_available).
         with (
-            mock.patch.object(lt, "CALIBRATION_DURATION_S", 0.05),
+            mock.patch.object(lt, "CALIBRATION_MAX_DURATION_S", 0.05),
             mock.patch.object(lt, "CALIBRATION_TIMEOUT_SLACK_S", 0.2),
         ):
             started = time.monotonic()
@@ -1331,6 +1369,457 @@ class AdaptiveCalibrationTests(unittest.TestCase):
 
         self.assertIsNone(lt.read_commit(timeout=0.05))
         self.assertEqual(lt.stats()["transcript_segments"], 0)
+
+
+class CalibrationRobustnessTests(_CalibrationSessionBase):
+    """Step 3b (7b.4): robust estimator, cap, flag, and replay.
+
+    Each test pins one locked design decision against the production
+    estimator (constants are NOT patched unless the test says so):
+    D1 outlier rejection with a test-established boundary and the
+    median-of-retained center (work item 1), D2 bounded extension up
+    to the hard cap (work item 2), D3 the contaminated-but-starts
+    contract (work item 3), and work items 4-5: calibration audio
+    replayed exactly once, in chronological order, through the normal
+    UtteranceAssembler path.
+
+    D4 evidence - THRESHOLD_MULTIPLIER stays 1.75 (7b.3a Decision B,
+    real-mic rounds 1-2 of the 7b.3a validation harness):
+    - M = 2.25 put the derived threshold above the measured speech
+      p50, so sentences were lost during live transcription
+    - M = 1.75 on the same recordings produced 0 idle commits and
+      silence_gate windows containing full sentences
+    - the measured 1-s calibration ambient RMS spanned 837-2899
+      (single-window variance, the contamination case D1 now
+      rejects), yielding thresholds of 1465-5074 at M = 1.75
+    M = 1.75 is therefore the locked starting point; it is re-derived
+    only if a later measurement demands it, and these tests re-derive
+    nothing.
+    """
+
+    def push_windows(self, *levels):
+        samples = int(lt.CALIBRATION_DURATION_S * lt.SAMPLE_RATE)
+        for level in levels:
+            self.capture.push(tone(samples, level=level))
+
+    def test_representative_measured_triple_retains_quiet_windows(self):
+        # The 7b.3a measured ambient windows [837, 958, 2899]: 2899 is
+        # contamination, 837 and 958 are quiet. This case - not a
+        # hard-coded constant - establishes the D1 outlier boundary
+        # (work item 1).
+        retained, rejected = lt._classify_calibration([837.0, 958.0, 2899.0])
+
+        self.assertEqual(retained, [837.0, 958.0])
+        self.assertEqual(rejected, 1)
+
+    def test_representative_case_completes_target_by_extension(self):
+        # The same measured triple plus one more quiet window: the
+        # contaminated window is rejected, bounded extension supplies
+        # the third usable window, and the threshold is derived from
+        # quiet material only (work items 1-2).
+        self.push_windows(837, 958, 2899, 900)
+
+        ok, reason = lt.start()
+        self.assertTrue(ok, reason)
+
+        stats = lt.stats()
+        self.assertEqual(stats["calibration_windows"], 4)
+        self.assertEqual(stats["calibration_rejected"], 1)
+        self.assertEqual(stats["calibration_usable"], 3)
+        self.assertFalse(stats["calibration_contaminated"])
+        # median([837, 900, 958]) = 900 -> 900 x 1.75 = 1575
+        self.assertEqual(stats["energy_threshold"], 1575)
+
+        lt.stop()
+
+    def test_three_clean_windows_stop_without_extension(self):
+        self.push_windows(1200, 1200, 1200)
+
+        ok, reason = lt.start()
+        self.assertTrue(ok, reason)
+
+        # A fourth read would block on the empty fake capture until the
+        # deadline and fail start(): ok=True proves the estimator
+        # stopped at the target (D1).
+        stats = lt.stats()
+        self.assertEqual(stats["energy_threshold"], 2100)
+        self.assertEqual(stats["calibration_windows"], 3)
+        self.assertEqual(stats["calibration_rejected"], 0)
+        self.assertEqual(stats["calibration_usable"], 3)
+        self.assertFalse(stats["calibration_contaminated"])
+        self.assertEqual(self.capture.chunks.qsize(), 0)
+
+        lt.stop()
+
+    def test_outlier_boundary_is_inclusive(self):
+        # 2000 == CALIBRATION_OUTLIER_RATIO x median: retained.
+        self.push_windows(1000, 1000, 2000)
+
+        ok, reason = lt.start()
+        self.assertTrue(ok, reason)
+
+        stats = lt.stats()
+        self.assertEqual(stats["calibration_windows"], 3)
+        self.assertEqual(stats["calibration_rejected"], 0)
+        self.assertEqual(stats["calibration_usable"], 3)
+        self.assertEqual(stats["energy_threshold"], 1750)
+
+        lt.stop()
+
+    def test_rms_just_above_ratio_is_rejected_and_extended_for(self):
+        # 2001 > 2 x median: rejected; the fourth window completes the
+        # target instead of failing the session (D1 + D2 extension).
+        self.push_windows(1000, 1000, 2001, 1000)
+
+        ok, reason = lt.start()
+        self.assertTrue(ok, reason)
+
+        stats = lt.stats()
+        self.assertEqual(stats["calibration_windows"], 4)
+        self.assertEqual(stats["calibration_rejected"], 1)
+        self.assertEqual(stats["calibration_usable"], 3)
+        self.assertFalse(stats["calibration_contaminated"])
+        self.assertEqual(stats["energy_threshold"], 1750)
+        self.assertTrue(
+            any("rejected=1" in message for message in self.calibration_log())
+        )
+
+        lt.stop()
+
+    def test_high_energy_window_outlier_does_not_inflate_threshold(self):
+        # The 7b.3a inflation case, now rejected: a single speech-like
+        # window among quiet ones must not move the median center.
+        self.push_windows(900, 1000, 2900, 1100)
+
+        ok, reason = lt.start()
+        self.assertTrue(ok, reason)
+
+        stats = lt.stats()
+        self.assertEqual(stats["calibration_windows"], 4)
+        self.assertEqual(stats["calibration_rejected"], 1)
+        self.assertEqual(stats["calibration_usable"], 3)
+        self.assertEqual(stats["energy_threshold"], 1750)
+        self.assertEqual(self.capture.chunks.qsize(), 0)
+
+        lt.stop()
+
+    def test_zero_windows_clamp_threshold_to_absolute_floor(self):
+        # Acceptance invariant: a partial calibration must never
+        # produce an uninitialized or unsafe threshold - the degenerate
+        # all-zero ambient lands exactly on ABSOLUTE_FLOOR, never below.
+        self.push_windows(0, 0, 0)
+
+        ok, reason = lt.start()
+        self.assertTrue(ok, reason)
+
+        stats = lt.stats()
+        self.assertEqual(stats["calibration_windows"], 3)
+        self.assertEqual(stats["calibration_usable"], 3)
+        self.assertEqual(stats["energy_threshold"], lt.ABSOLUTE_FLOOR)
+        self.assertGreaterEqual(
+            stats["energy_threshold"], lt.ABSOLUTE_FLOOR
+        )
+        self.assertFalse(stats["calibration_contaminated"])
+
+        lt.stop()
+
+    def test_all_elevated_windows_stay_stable_and_valid(self):
+        # [4000, 4200, 4500]: every window is elevated but mutually
+        # consistent, so the D1 median rule finds no outlier - an
+        # all-elevated set is statistically indistinguishable from an
+        # all-quiet one (quiet-window validation is deliberately absent
+        # from 7b.4, pinned by test_speech_in_calibration_window_
+        # inflates_threshold). The estimator must not crash, must
+        # report the counts honestly, and must yield a floor-safe
+        # threshold: contaminated stays False because all 3 windows are
+        # usable - the flag means "fewer than K usable windows", not
+        # "windows contain speech".
+        self.push_windows(4000, 4200, 4500)
+
+        ok, reason = lt.start()
+        self.assertTrue(ok, reason)
+
+        stats = lt.stats()
+        self.assertEqual(stats["calibration_windows"], 3)
+        self.assertEqual(stats["calibration_rejected"], 0)
+        self.assertEqual(stats["calibration_usable"], 3)
+        self.assertFalse(stats["calibration_contaminated"])
+        # median 4200 -> 4200 x 1.75 = 7350 (the pinned 7b.3a
+        # inflation case, accepted and unchanged)
+        self.assertEqual(stats["energy_threshold"], 7350)
+        self.assertGreaterEqual(
+            stats["energy_threshold"], lt.ABSOLUTE_FLOOR
+        )
+
+        lt.stop()
+
+    def test_hard_cap_returns_best_available_and_flags_contaminated(self):
+        with mock.patch.object(lt, "CALIBRATION_TARGET_WINDOWS", 4):
+            self.push_windows(900, 1000, 1100, 2900, 3000)
+
+            ok, reason = lt.start()
+            # D2/D3: best-available estimate, session still starts.
+            self.assertTrue(ok, reason)
+
+            stats = lt.stats()
+            self.assertEqual(stats["calibration_windows"], 5)
+            self.assertEqual(stats["calibration_rejected"], 2)
+            self.assertEqual(stats["calibration_usable"], 3)
+            self.assertTrue(stats["calibration_contaminated"])
+            self.assertEqual(stats["energy_threshold"], 1750)
+            self.assertEqual(self.capture.chunks.qsize(), 0)
+
+        lt.stop()
+
+    def test_stall_with_partial_windows_starts_best_available(self):
+        # Capture stall (empty reads) after two windows: the deadline
+        # only fails a calibration that produced no window at all
+        # (that path is pinned by test_calibration_timeout_releases_
+        # capture); with one or more windows D2 falls through to the
+        # best-available estimate and calibration_contaminated=True
+        # (work items 2/3), and the session starts.
+        with (
+            mock.patch.object(lt, "CALIBRATION_MAX_DURATION_S", 0.05),
+            mock.patch.object(lt, "CALIBRATION_TIMEOUT_SLACK_S", 0.2),
+        ):
+            self.push_windows(1000, 1000)
+
+            ok, reason = lt.start()
+            self.assertTrue(ok, reason)
+
+            stats = lt.stats()
+            self.assertEqual(stats["calibration_windows"], 2)
+            self.assertEqual(stats["calibration_rejected"], 0)
+            self.assertEqual(stats["calibration_usable"], 2)
+            self.assertTrue(stats["calibration_contaminated"])
+            self.assertEqual(stats["energy_threshold"], 1750)
+            self.assertEqual(self.capture.chunks.qsize(), 0)
+
+        lt.stop()
+        self.assertEqual(self.capture.stop_calls, 1)
+
+    def test_calibration_audio_replayed_through_normal_assembler(self):
+        # quiet, speech, quiet, quiet: the speech window happened DURING
+        # calibration; the old pipeline consumed it, the new one replays
+        # it (work items 4-5).
+        self.engine.gate.clear()
+        self.engine.entered.clear()
+        self.push_windows(400, 3000, 400, 400)
+
+        ok, reason = lt.start()
+        self.assertTrue(ok, reason)
+
+        stats = lt.stats()
+        self.assertEqual(stats["energy_threshold"], 700)
+        self.assertEqual(stats["calibration_windows"], 4)
+        self.assertEqual(stats["calibration_rejected"], 1)
+
+        self.assertTrue(
+            wait_until(lambda: self.engine.entered.is_set()),
+            "replayed calibration speech never reached the transcription "
+            "thread",
+        )
+        call = self.engine.calls[0]
+        # Exactly one commit: the speech window (chronological position
+        # 2), silence-gated at 16000 samples; the quiet calibration
+        # windows commit nothing above the 700 derived threshold.
+        self.assertEqual(call["nframes"], 16000)
+        self.assertEqual(call["first_sample"], 3000)
+
+        self.engine.gate.set()
+        self.assertTrue(
+            wait_until(lambda: lt.stats()["transcript_segments"] == 1)
+        )
+        self.assertEqual(len(self.engine.calls), 1)
+
+        lt.stop()
+        self.assertEqual(lt.stats()["transcript_segments"], 1)
+
+    def test_replay_orders_calibration_speech_before_live_speech(self):
+        # Calibration audio: quiet, speech, quiet (exactly K=3 windows,
+        # work items 4-5); live audio afterwards: a second, distinct
+        # utterance. The replayed calibration speech must commit FIRST,
+        # in chronological order, exactly once - no inversion (replay
+        # completes before any live chunk is read) and no duplicate
+        # replay (a second pass would produce a third commit).
+        # quiet=1000 keeps the speech window inside the D1 boundary
+        # (1850 <= 2 x median) while staying above the derived gate
+        # (1850 > 1000 x 1.75 = 1750), so the calibration window is
+        # both retained by the estimator and detectable on replay.
+        self.engine.results.put("calibration speech")
+        self.engine.results.put("live speech")
+        self.push_windows(1000, 1850, 1000)
+
+        ok, reason = lt.start()
+        self.assertTrue(ok, reason)
+
+        stats = lt.stats()
+        self.assertEqual(stats["energy_threshold"], 1750)
+        self.assertEqual(stats["calibration_rejected"], 0)
+        self.assertEqual(stats["calibration_usable"], 3)
+        self.assertFalse(stats["calibration_contaminated"])
+
+        self.assertTrue(
+            wait_until(lambda: lt.stats()["transcript_segments"] == 1),
+            "replayed calibration speech never reached the transcript",
+        )
+
+        self.capture.push(tone(16000, level=4000))
+        self.capture.push(silence(16000))
+        self.assertTrue(
+            wait_until(lambda: lt.stats()["transcript_segments"] == 2),
+            "live speech never reached the transcript",
+        )
+
+        self.assertEqual(
+            lt.get_transcript(), ["calibration speech", "live speech"]
+        )
+        self.assertEqual(self.engine.calls[0]["nframes"], 16000)
+        self.assertEqual(self.engine.calls[0]["first_sample"], 1850)
+        self.assertEqual(self.engine.calls[1]["nframes"], 16000)
+        self.assertEqual(self.engine.calls[1]["first_sample"], 4000)
+
+        lt.stop()
+        self.assertEqual(lt.stats()["transcript_segments"], 2)
+        self.assertEqual(len(self.engine.calls), 2)
+
+    def test_zero_target_skips_sampling_yields_floor(self):
+        with mock.patch.object(lt, "CALIBRATION_TARGET_WINDOWS", 0):
+            ok, reason = lt.start()
+            self.assertTrue(ok, reason)
+
+            stats = lt.stats()
+            self.assertEqual(stats["energy_threshold"], lt.ABSOLUTE_FLOOR)
+            self.assertEqual(stats["calibration_windows"], 0)
+            self.assertFalse(stats["calibration_contaminated"])
+
+        lt.stop()
+
+    def test_floor_protection_zero_rms_windows(self):
+        # A: Floor protection - all zero RMS windows must yield
+        # threshold = ABSOLUTE_FLOOR, never uninitialized or unsafe.
+        self.push_windows(0, 0, 0)
+
+        ok, reason = lt.start()
+        self.assertTrue(ok, reason)
+
+        stats = lt.stats()
+        self.assertEqual(stats["calibration_windows"], 3)
+        self.assertEqual(stats["calibration_rejected"], 0)
+        self.assertEqual(stats["calibration_usable"], 3)
+        self.assertEqual(stats["energy_threshold"], lt.ABSOLUTE_FLOOR)
+        self.assertFalse(stats["calibration_contaminated"])
+
+        lt.stop()
+
+    def test_all_high_energy_windows_contaminated_but_valid(self):
+        # B: All contaminated windows - when every sampled window is
+        # high-energy (e.g., continuous speech during calibration), the
+        # estimator must not crash and must produce a valid threshold.
+        # Four consistent windows reach the target, so none are rejected
+        # as outliers and the result is usable, not contaminated (the
+        # contaminated-but-valid path at the cap is pinned by
+        # test_cap_with_all_contaminated_flags_and_valid_threshold).
+        with mock.patch.object(lt, "CALIBRATION_TARGET_WINDOWS", 4):
+            self.push_windows(4000, 4200, 4500, 4300)
+
+            ok, reason = lt.start()
+            self.assertTrue(ok, reason)
+
+            stats = lt.stats()
+            self.assertEqual(stats["calibration_windows"], 4)
+            self.assertEqual(stats["calibration_rejected"], 0)
+            self.assertEqual(stats["calibration_usable"], 4)
+            self.assertFalse(stats["calibration_contaminated"])
+            self.assertGreaterEqual(
+                stats["energy_threshold"], lt.ABSOLUTE_FLOOR
+            )
+
+        lt.stop()
+
+    def test_cap_with_all_contaminated_flags_and_valid_threshold(self):
+        # B variant: target=5, but the capture only ever delivers three
+        # windows, so the deadline falls through to the best-available
+        # estimate (work items 2/3) with 3 usable < 5 target windows:
+        # calibration_contaminated=True and a valid high threshold.
+        with (
+            mock.patch.object(lt, "CALIBRATION_TARGET_WINDOWS", 5),
+            mock.patch.object(lt, "CALIBRATION_MAX_DURATION_S", 0.05),
+            mock.patch.object(lt, "CALIBRATION_TIMEOUT_SLACK_S", 0.2),
+        ):
+            self.push_windows(4000, 4200, 4500)
+
+            ok, reason = lt.start()
+            self.assertTrue(ok, reason)
+
+            stats = lt.stats()
+            self.assertEqual(stats["calibration_windows"], 3)
+            self.assertEqual(stats["calibration_rejected"], 0)
+            self.assertEqual(stats["calibration_usable"], 3)
+            self.assertTrue(stats["calibration_contaminated"])
+            self.assertGreaterEqual(
+                stats["energy_threshold"], lt.ABSOLUTE_FLOOR
+            )
+
+        lt.stop()
+
+    def test_replay_ordering_no_inversion_no_duplicate(self):
+        # C: Replay ordering invariant - calibration audio (silence,
+        # speech, silence) then new live audio (speech2) must produce
+        # segments in order: speech (from calibration replay), then
+        # speech2 (from live). No inversion, no duplicate replay.
+        # Calibration: quiet (400), speech (3000), quiet (400), quiet (400)
+        # Live: speech2 (4000)
+        self.engine.gate.clear()
+        self.engine.entered.clear()
+        self.push_windows(400, 3000, 400, 400)
+
+        ok, reason = lt.start()
+        self.assertTrue(ok, reason)
+
+        stats = lt.stats()
+        self.assertEqual(stats["energy_threshold"], 700)
+        self.assertEqual(stats["calibration_windows"], 4)
+        self.assertEqual(stats["calibration_rejected"], 1)
+
+        # Wait for calibration replay to reach transcription thread
+        self.assertTrue(
+            wait_until(lambda: self.engine.entered.is_set()),
+            "calibration replay never reached transcription thread",
+        )
+
+        # First call should be the calibration speech window
+        call1 = self.engine.calls[0]
+        self.assertEqual(call1["nframes"], 16000)
+        self.assertEqual(call1["first_sample"], 3000)
+
+        # Let calibration commit finish (gets default_result)
+        self.engine.gate.set()
+        self.assertTrue(
+            wait_until(lambda: lt.stats()["transcript_segments"] == 1),
+            "calibration speech never committed",
+        )
+
+        # Now feed live speech2 and provide its expected result
+        self.engine.results.put("speech2")
+        self.capture.push(joined(tone(4800, level=4000), silence(11200)))
+
+        self.assertTrue(
+            wait_until(lambda: lt.stats()["transcript_segments"] == 2),
+            "live speech2 never committed",
+        )
+
+        # Verify order: calibration speech first, then live speech2
+        transcript = lt.get_transcript()
+        self.assertEqual(len(transcript), 2)
+        self.assertEqual(transcript[0], "committed transcript")  # calibration speech
+        self.assertEqual(transcript[1], "speech2")  # live speech2
+
+        # Exactly 2 Whisper calls: one for calibration speech, one for speech2
+        self.assertEqual(len(self.engine.calls), 2)
+
+        lt.stop()
+        self.assertEqual(lt.stats()["transcript_segments"], 2)
 
 
 if __name__ == "__main__":
