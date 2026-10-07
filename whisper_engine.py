@@ -17,6 +17,10 @@ whisper_process = None
 _invoke_lock = threading.Lock()
 INVOKE_POLL_INTERVAL = 0.05
 
+# Shutdown-path bound: how long terminate_outstanding() waits for the
+# child to be reaped after kill().
+TERMINATE_TIMEOUT = 2.0
+
 
 def get_whisper_language(language_mode):
     mode = language_mode.upper()
@@ -199,3 +203,46 @@ def _invoke_whisper(wav_path, cancel_event):
     finally:
         if whisper_process is process:
             whisper_process = None
+
+
+def terminate_outstanding():
+    """Shutdown-path helper: terminate and reap an outstanding child.
+
+    Called only from live_supervisor.shutdown() when the F8 quiesce
+    window expired, i.e. when the application is exiting while an
+    invocation may still be in flight. The F8 path passes
+    cancel_event=None and owns no cancellation of its own, so without
+    this call that child would outlive the process.
+
+    Deliberately does not touch _invoke_lock: it has to interrupt the
+    invocation currently holding it, and the normal-path serialization
+    of whisper_transcribe (M1) is left untouched.
+
+    Kill plus wait only. The invocation owner keeps its own handle and
+    finishes through its normal poll/communicate loop, so this helper
+    never reads a pipe another thread may be reading. The module handle
+    is cleared once the child is confirmed reaped. Returns True when a
+    child handle was found.
+    """
+    global whisper_process
+
+    process = whisper_process
+
+    if process is None:
+        return False
+
+    if process.poll() is None:
+        try:
+            process.kill()
+        except OSError:
+            logger.warning("Whisper child could not be terminated")
+
+    try:
+        process.wait(timeout=TERMINATE_TIMEOUT)
+    except (subprocess.TimeoutExpired, OSError) as error:
+        logger.warning(f"Whisper child not confirmed reaped: {error}")
+    else:
+        if whisper_process is process:
+            whisper_process = None
+
+    return True

@@ -379,14 +379,37 @@ def exit_application(icon, item):
 
     logger.info("Exiting Voice Assistant")
 
+    # stopping is asserted FIRST: the status loop stops rendering from
+    # this moment on, even if teardown raises below.
     stopping = True
 
-    live_supervisor.shutdown()
-
-    icon.stop()
+    try:
+        live_supervisor.shutdown()
+    finally:
+        # The icon must always be stopped, otherwise the tray thread
+        # would outlive a failed teardown and the process would hang.
+        icon.stop()
 
 
 # ================= STATUS =================
+
+
+def display_status(status, live_status):
+    """Resolve one render tick of the D6 precedence matrix.
+
+    The F8 active states always win over live rendering, so the tray
+    can never claim live is the foreground operation while F8 owns the
+    microphone. Live rendering is applied only while status is IDLE.
+    """
+    if status == "IDLE":
+        if live_status == live_supervisor.LIVE_ERROR:
+            return "LIVE_ERROR"
+        if live_status == live_supervisor.LIVE_LISTENING:
+            return "LIVE_LISTENING"
+
+    return status
+
+
 def update_tray(icon):
     global tray_icon
 
@@ -401,13 +424,7 @@ def update_tray(icon):
             current_status = state.status
             current_live = state.live_status
 
-        display_status = current_status
-
-        if current_status == "IDLE":
-            if current_live == live_supervisor.LIVE_ERROR:
-                display_status = "LIVE_ERROR"
-            elif current_live == live_supervisor.LIVE_LISTENING:
-                display_status = "LIVE_LISTENING"
+        display = display_status(current_status, current_live)
 
         with warning_lock:
             current_warning_until = warning_until
@@ -497,14 +514,14 @@ def update_tray(icon):
         # NORMAL APPLICATION STATUS
         # -------------------------------------------------
 
-        if display_status != last_status:
-            logger.info(f"Tray status: {display_status}")
+        if display != last_status:
+            logger.info(f"Tray status: {display}")
 
-            icon.icon = create_icon(display_status)
+            icon.icon = create_icon(display)
 
-            last_status = display_status
+            last_status = display
 
-        icon.title = "Voice Assistant - " + display_status
+        icon.title = "Voice Assistant - " + display
 
         time.sleep(0.5)
 

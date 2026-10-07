@@ -2,7 +2,7 @@
 
 > Authority: `docs/HANDOVER.md` is the single source of truth. This file is supporting detail; if they disagree, HANDOVER.md wins.
 
-Last updated: 2026-10-07 — Phase 7d.1 (uncommitted)
+Last updated: 2026-10-07 — Phase 7d.2 (implemented, uncommitted)
 
 ---
 
@@ -14,16 +14,19 @@ Command:
 python -m unittest discover -v
 ```
 
-Result: **126 / 126 pass** (11.4 s), 2026-10-07.
+Result: **152 / 152 pass** (16.8 s), 2026-10-07 (7d.1 baseline was
+126 / 126).
 
-| Suite | Tests |
-|---|---|
-| `test_live_transcribe` | 91 |
-| `test_live_output` | 18 |
-| `test_live_supervisor` | 6 |
-| `test_integration_7d` | 6 |
-| `test_whisper_cancel_lifecycle` | 5 |
-| **total** | **126** |
+| Suite | Tests | of which 7d.2 |
+|---|---|---|
+| `test_live_transcribe` | 91 | — |
+| `test_live_output` | 18 | — |
+| `test_live_supervisor` | 14 | +8 |
+| `test_tray` (new) | 10 | +10 |
+| `test_config_persistence` (new) | 8 | +8 |
+| `test_integration_7d` | 6 | — |
+| `test_whisper_cancel_lifecycle` | 5 | — |
+| **total** | **152** | **+26** |
 
 Supervisor coverage highlights:
 
@@ -32,6 +35,33 @@ Supervisor coverage highlights:
 - start failure leaves no ownership and reports `LIVE_ERROR`
 - failure cleanup path (`reconcile`) releases the microphone
 - idempotent shutdown, rejection after shutdown
+- **7d.2:** quiescence waits for every F8 state (RECORDING,
+  PROCESSING, OUTPUTTING) and both F8 flags; idle F8 returns
+  immediately; a quiesce timeout terminates and reaps an injected
+  Whisper child (fake handle — no real whisper-cli, no timing on a real
+  invocation); a clean quiesce never touches the child handle
+- **7d.2:** `LIVE_ERROR` keeps F8 allowed, `toggle()` recovers to
+  `LIVE_LISTENING`, `reconcile()` never auto-restarts (D5 unchanged)
+
+Tray coverage (closes the 7d.1 open gap):
+
+- D6 matrix in isolation, including the F8-vs-live overlap rows
+- overlay priority: startup error > microphone error > F8 state
+  (supersedes a rendered warning) > temporary warning (beats live
+  rendering while IDLE) > normal status
+- thin `update_tray` loop run against a fake icon (title/icon/stop)
+- `exit_application`: `stopping` asserted before teardown, and
+  `icon.stop()` still attempted when teardown raises
+
+Config coverage (7d.2, temporary config file only — `config.json` is
+byte-compared before/after each test):
+
+- round trip, defaults on missing file, fallback on unreadable file,
+  no leftover `config_*.tmp`
+- D8 through the real tray callback: refused start writes nothing,
+  successful start persists `true`, stop persists `false`
+- `main.py` holds no config writer and still reads
+  `live_mode_enabled` (structural check of decision 6)
 
 ### Lint
 
@@ -39,13 +69,16 @@ Supervisor coverage highlights:
 & "$env:USERPROFILE\.local\bin\ruff.exe" check <files>
 ```
 
-- 7d.1-touched files (`app_state.py config.py main.py tray.py
-  live_supervisor.py test_live_supervisor.py test_integration_7d.py`):
-  **All checks passed.**
-- Full repo `ruff check .`: 30 findings, all pre-existing and outside
-  7d.1 (`live_capture.py` 4, `recovery.py` 1, `runtime_validation.py` 1,
-  `text_output.py` 7, `real_mic_validation.py` 2, `real_mic_validation_7c.py` 14,
-  plus `main.py` `# noqa: BLE001` comments already annotated).
+- 7d.2-touched files (`tray.py live_supervisor.py whisper_engine.py
+  test_tray.py test_live_supervisor.py test_config_persistence.py`)
+  plus 7d.1 files (`app_state.py config.py main.py
+  test_integration_7d.py`): **All checks passed.**
+- Full repo `ruff check .`: 30 findings, all pre-existing and in files
+  untouched by 7d.1/7d.2 (`live_capture.py` 5, `text_output.py` 7,
+  `real_mic_validation_7c.py` 14, `real_mic_validation.py` 2,
+  `recovery.py` 1, `runtime_validation.py` 1). (The 7d.1 note listed
+  `live_capture.py` as 4 and one finding as a `main.py` annotation;
+  the total of 30 is unchanged and `main.py` is clean.)
 - No `pytest` — the project uses `unittest`.
 
 ---
@@ -195,10 +228,75 @@ Notes:
 
 ---
 
+## 7d.2 targeted smoke re-run — 2026-10-07
+
+Method: the same out-of-repo harness (`%TEMP%\opencode\smoke_7d1.py`),
+full 8-scenario run after the 7d.2 implementation. Transcript:
+`%TEMP%\opencode\smoke_7d2_rerun.txt`; machine-readable output:
+`%TEMP%\opencode\smoke_7d1_results.json` (overwritten by this run).
+`config.json` SHA-256 identical before and after.
+
+| Scenario | Result |
+|---|---|
+| `exit_idle` | **PASS**, exit 0, `tray_stopping=True`, `shutdown_set=True`, `post.mic_owner=None`, `post.lo_state=STOPPED`, `post.whisper_child=None` |
+| `exit_live` | **PASS**, exit 0 from `LIVE_LISTENING`, same clean postconditions |
+| `exit_f8` | **PASS**, exit 0, clean postconditions — but this session's Exit landed while status was already `IDLE` (see environment note below) |
+| `toggle_semantics` | **PASS**, checkmarks/`live_mode_enabled` on/off as specified |
+| `error_retry` | **PASS**, `failed.live_status=LIVE_ERROR`, `failed.config=False`, tray `LIVE_ERROR` |
+| `f8_blocked` | **PASS**, refusal warning, `after.status=IDLE`, no recording, no whisper child |
+| `precedence` | **PASS**, `IDLE+LIVE_LISTENING → LIVE_LISTENING`, `IDLE+LIVE_ERROR → LIVE_ERROR`, `row2_after.tray_title = LIVE_ERROR` (`row2.samples=[]`, see note) |
+| `physical_exit` | **BLOCKED BY ENVIRONMENT** — see below |
+
+Environment notes (this session, reproducible from an unrelated
+`python -c` process):
+
+1. **Global key injection is not delivered.** `f8_press_hook_seen` and
+   `f8_release_hook_seen` were `False` in every scenario, so the
+   harness used its documented direct fallback (calling
+   `main.f8_down()` / `main.f8_up()`, the same functions the hotkey
+   handler calls). Consequences: `exit_f8` completed the F8 cycle
+   before Exit ran (`f8_state_at_exit = <not observed, status=IDLE>`),
+   and `precedence` `row2.samples` is empty because the synchronous
+   `f8_up()` fallback returns only after processing finished. Both
+   scenarios still exited 0 with correct final titles.
+2. **`GetCursorPos` is denied.** `physical_exit` fails inside pystray
+   `_win32._on_notify` with `PermissionError: [WinError 5]` before any
+   application code runs; the menu never opens and the harness kills
+   the child (`exit_code=1`, `timed_out=True`). The same call returns
+   error 5 from a plain `python -c` in this session, so this is
+   session/desktop access, not a 7d.2 regression (the identical
+   harness passed this scenario on 7d.1).
+
+**Supplementary check for the path this session could not drive**
+(`%TEMP%\opencode\smoke_7d2_exit_f8_direct.py`, out of repo, results in
+`smoke_7d2_exit_f8_direct_results.json`): calls `main.f8_down()`,
+holds the recording 3 s, then `main.f8_up()` on its own thread and
+invokes the real pystray `Exit` callback while
+`state.status == PROCESSING`.
+
+| Marker | Value |
+|---|---|
+| `f8_state_at_exit` | `PROCESSING` |
+| `releaser_alive_at_exit` | `True` |
+| `exit_seconds` (teardown incl. quiesce) | **2.423 s** (< 5 s `QUIESCE_TIMEOUT`) |
+| `post.status` / `post.recording` / `post.processing` | `IDLE` / `False` / `False` |
+| `post.mic_owner` / `post.lo_state` / `post.live_threads` | `None` / `STOPPED` / `none` |
+| `post.whisper_child` / `whisper_leftover` | `None` / none |
+| `process.exit_code` / `process.timed_out` | `0` / `False` |
+
+Outcome: **PASS.** The quiescence wait observed F8 finishing and
+teardown completed cleanly with no orphaned Whisper child.
+
+---
+
 ## Checkpoint rule
 
-If all manual checks pass: stop and request approval for the 7d.1
-commit. Commit only 7d.1 code files — never `config.json`,
-`whisper/whisper-vulkan`, `real_mic_validation*.py`. Do not push without
-approval. Do not start 7d.2 before the checkpoint is committed and
-verified.
+**7d.1:** satisfied — tests green, manual smoke PASS, `dc5c4aa`
+committed (not pushed).
+
+**7d.2:** implementation and synthetic tests complete; targeted 7d.1
+smoke re-run executed as recorded above. Stop here and request review.
+Commit the 7d.2 checkpoint only after explicit approval, staging
+nothing but 7d.2 code/tests/docs — never `config.json`,
+`whisper/whisper-vulkan`, `real_mic_validation*.py`. Push only on a
+separate, explicit decision.

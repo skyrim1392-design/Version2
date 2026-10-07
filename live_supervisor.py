@@ -16,7 +16,9 @@ Responsibilities:
       live manually (Decision 5, wait-for-user, no auto-restart);
     - enforce the shutdown invariant: shutdown() sets the shutdown
       flag FIRST, so no new work (F8 press, start, stop, tray toggle)
-      can enter while teardown runs.
+      can enter while teardown runs; teardown then quiesces F8
+      (bounded by QUIESCE_TIMEOUT) and, if that wait expires,
+      terminates and reaps an outstanding Whisper child.
 
 Not responsible for: capturing audio, running whisper, delivering
 text, or rendering the tray - those remain in their subsystems.
@@ -30,6 +32,7 @@ import time
 import live_output as lo
 import live_transcribe as lt
 import logger
+import whisper_engine
 from app_state import state
 
 LIVE_IDLE = "LIVE_IDLE"
@@ -42,6 +45,12 @@ SHUTTING_DOWN = "shutting_down"
 F8_BLOCKED_MESSAGE = "Microphone is currently used by Live Transcription"
 
 QUIESCE_TIMEOUT = 5.0
+
+# F8's own states (same set as tray.ACTIVE_STATES, D6). Shutdown must
+# not proceed until F8 has returned to IDLE from one of them; the
+# recording/processing flags are checked as well because they can lead
+# the status field.
+F8_BUSY_STATUSES = ("RECORDING", "PROCESSING", "OUTPUTTING")
 
 _lock = threading.Lock()
 _shutdown = threading.Event()
@@ -194,6 +203,18 @@ def shutdown():
     so every request that arrives from this moment on is rejected
     immediately (never blocked). The first caller then quiesces F8
     processing (bounded) and stops lt/lo in order.
+
+    First-caller ownership: only the caller that observed the flag
+    unset runs the teardown; a later caller blocks on the teardown
+    lock and returns as soon as that teardown is done, without
+    repeating any of it.
+
+    Quiescence covers every F8 state (RECORDING, PROCESSING,
+    OUTPUTTING) and both F8 flags, so teardown waits until F8 has
+    returned to IDLE. If the bounded wait expires, the timeout path
+    terminates and reaps any outstanding Whisper child before the
+    lt/lo teardown runs, because the F8 pipeline has no cancellation
+    and that child would otherwise outlive this process.
     """
     first = not _shutdown.is_set()
     _shutdown.set()
@@ -206,7 +227,11 @@ def shutdown():
 
         while time.monotonic() < deadline:
             with state.lock:
-                busy = state.recording or state.processing
+                busy = (
+                    state.recording
+                    or state.processing
+                    or state.status in F8_BUSY_STATUSES
+                )
 
             if not busy:
                 break
@@ -216,6 +241,7 @@ def shutdown():
             logger.warning(
                 "Shutdown quiesce timed out waiting for F8 processing"
             )
+            whisper_engine.terminate_outstanding()
 
         lt.stop()
         lo.stop()

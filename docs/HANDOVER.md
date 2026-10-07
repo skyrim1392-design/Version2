@@ -1,11 +1,14 @@
 # Windows Voice Assistant — Agent Handover
 
-Last updated: 2026-10-07
+Last updated: 2026-10-07 (7d.2 session — implementation, tests, docs)
 Repository: `C:\VoiceAssistant\Version2`
 Branch: `backend-foundation`
-Current HEAD: `dd5d231` — Complete 7c live transcription delivery and serialization
-Remote: `origin/backend-foundation` (in sync with HEAD; nothing new pushed)
-Worktree: dirty — 7d.1 implemented, **uncommitted by instruction**
+Current HEAD: `dc5c4aa` — Integrate live transcription lifecycle (7d.1 checkpoint)
+Remote: `origin/backend-foundation` — **1 commit ahead, NOT pushed**
+Worktree: **7d.2 changes are implemented and UNCOMMITTED** (see "7d.2
+contents"), plus the expected exclusions (`config.json`,
+`whisper/whisper-vulkan`, `real_mic_validation*.py`) and untracked
+`real_mic_validation*.py`
 
 ## Authority
 
@@ -19,7 +22,7 @@ HANDOVER.md                    ← read first, always; authoritative state
    ├── current state / next action
    ├── PROGRESS.md            → history (phases, commits, timeline)
    ├── ARCHITECTURE.md        → architecture (ownership, state model)
-   ├── DECISIONS.md           → frozen decisions (D1–D12)
+   ├── DECISIONS.md           → frozen decisions (D1–D15)
    ├── TEST_STATUS.md         → evidence (automated + manual checklist)
    ├── ROADMAP.md             → future phases
    └── project_state.json     → machine-readable state snapshot
@@ -28,7 +31,7 @@ HANDOVER.md                    ← read first, always; authoritative state
 Read order for a new session:
 
 1. `docs/HANDOVER.md` (this file) — authoritative
-2. `docs/TEST_STATUS.md` — the sole blocker and its checklist
+2. `docs/TEST_STATUS.md` — evidence and the current gate checklist
 3. `docs/DECISIONS.md` — frozen rules before touching anything
 4. `git status` and `git log -5` — confirm reality matches this file
 5. `docs/project_state.json` — machine-readable cross-check
@@ -86,21 +89,31 @@ Live mode
 
 ## Current phase
 
-**Phase 7d.1 — Production hardening (lifecycle + tray integration)**
+**Phase 7d.2 — Production hardening (tray coverage, shutdown
+quiescence, Whisper orphan handling)**
 
-Status: `IMPLEMENTATION COMPLETE — MANUAL UI VALIDATION PASSED`
+Status: `7d.2 IMPLEMENTED — AT THE IMPLEMENTATION/TEST-REVIEW GATE`
 
-- Code implemented: yes
-- Automated tests: 126/126 pass (re-run after the smoke test, 11.35 s)
-- Static checks: 7d.1-touched files pass `ruff check`
-- Manual tray smoke test: **RUN — PASS (2026-10-07)**, 8/8 scenarios,
-  every child process exited code 0 (see `docs/TEST_STATUS.md`)
-- Commit: **NOT ALLOWED YET** (review verdict: validate first, then stop for approval)
-- Push: not allowed without approval
+- Code implemented: yes (see "7d.2 contents"), **uncommitted**
+- Automated tests: 152/152 pass (`python -m unittest discover -v`,
+  16.8 s) — 126 baseline + 26 new
+- Static checks: all 7d.2-touched files pass `ruff check`; full repo
+  unchanged at 30 pre-existing findings in frozen/untouched files
+- Targeted 7d.1 smoke re-run: **7/8 scenarios PASS** (2026-10-07);
+  `physical_exit` blocked by this session's denied `GetCursorPos`
+  (environment, reproducible outside the app) and key injection was
+  unavailable — both recorded in `docs/TEST_STATUS.md`
+- Supplementary out-of-repo driver: Exit invoked during F8
+  `PROCESSING` quiesced in 2.423 s, child exit 0, no orphaned Whisper
+  process
+- 7d.1 checkpoint: **`dc5c4aa`** still HEAD, **not pushed**
 
-Next action: the validation blocker is cleared. **Stop and request
-approval for the 7d.1 commit.** Do not write new production code, do not
-commit, do not push until approval is given.
+Next action: **STOP AT THE GATE.** Review this session's diff
+(`git status` + `git diff`), then either request approval for a 7d.2
+checkpoint commit (staging only 7d.2 code/tests/docs — never
+`config.json`, `whisper/whisper-vulkan`, `real_mic_validation*.py`) or
+send changes back for revision. No commit, no push, no new work without
+explicit approval.
 
 ---
 
@@ -109,9 +122,12 @@ commit, do not push until approval is given.
 | Phase | Commit | Status |
 |---|---|---|
 | 7b.4 Calibration robustness | `2691031` | pushed |
-| 7c Live transcription delivery | `dd5d231` | pushed (current HEAD) |
+| 7c Live transcription delivery | `dd5d231` | pushed |
 | 7d.0 Design gate | — | approved, no code |
-| 7d.1 Lifecycle + tray | uncommitted | waiting manual validation |
+| 7d.1 Lifecycle + tray | `dc5c4aa` | committed 2026-10-07, **local only — NOT pushed (current HEAD)** |
+| 7d.2 Hardening | — | **implemented, uncommitted** — at test-review gate |
+
+Remote is therefore 1 commit behind local: `backend-foundation...origin/backend-foundation [ahead 1]`.
 
 Never commit (development/validation scripts only):
 
@@ -148,11 +164,11 @@ See `docs/ARCHITECTURE.md` for the full picture.
 | Module | Owns |
 |---|---|
 | `main.py` | F8 lifecycle, startup, main loop, cleanup |
-| `live_supervisor.py` | live session lifecycle, mic ownership gate, shutdown coordination, `state.live_status` |
+| `live_supervisor.py` | live session lifecycle, mic ownership gate, shutdown coordination + F8 quiescence, `state.live_status` |
 | `live_transcribe.py` | streaming capture + whisper streaming (`lt`) |
 | `live_output.py` | transcript delivery / cursor (`lo`) |
-| `whisper_engine.py` | serialized whisper invocation |
-| `tray.py` | tray rendering, menu, Exit |
+| `whisper_engine.py` | serialized whisper invocation; `terminate_outstanding()` (shutdown-path kill/reap) |
+| `tray.py` | tray rendering (`display_status`), menu, Exit (teardown in `try`/`finally` around `icon.stop()`) |
 | `app_state.py` | shared state (`status`, `live_status`) |
 | `config.py` | defaults + persistence (`live_mode_enabled` is the only 7d.1 addition) |
 
@@ -162,7 +178,7 @@ live start is refused.
 
 ---
 
-## Current uncommitted work (7d.1)
+## 7d.1 contents (committed in `dc5c4aa`)
 
 Modified:
 
@@ -174,41 +190,117 @@ Modified:
 - `tray.py` — Live Transcription menu item, live-aware status
   rendering, Exit calls `live_supervisor.shutdown()` before
   `icon.stop()`, tray loop stops on `stopping`
-- `config.json` — **runtime dirt only, must NOT be committed**
-- `whisper/whisper-vulkan` — **must NOT be committed**
 
 New:
 
 - `live_supervisor.py`
 - `test_live_supervisor.py`
 - `test_integration_7d.py`
+- `docs/` (handover layer: `HANDOVER.md`, `TEST_STATUS.md`,
+  `DECISIONS.md`, `ARCHITECTURE.md`, `PROGRESS.md`, `ROADMAP.md`,
+  `project_state.json`)
+
+Deliberately excluded from the commit (still dirty/untracked):
+
+- `config.json` — runtime dirt only, must NOT be committed
+- `whisper/whisper-vulkan` — must NOT be committed
+- `real_mic_validation.py`, `real_mic_validation_7c.py` — validation
+  harnesses, must NOT be committed
+
+---
+
+## 7d.2 contents (implemented, UNCOMMITTED)
+
+Modified:
+
+- `tray.py` — extracted `display_status(status, live_status)` from
+  `update_tray` (local variable renamed to `display`); `exit_application`
+  asserts `stopping` first and wraps teardown in `try`/`finally` so
+  `icon.stop()` always runs (D15)
+- `live_supervisor.py` — `F8_BUSY_STATUSES =
+  ("RECORDING", "PROCESSING", "OUTPUTTING")`; `shutdown()` quiesce now
+  waits for those statuses *and* both F8 flags (bounded by the existing
+  `QUIESCE_TIMEOUT = 5.0`); on timeout it logs and calls
+  `whisper_engine.terminate_outstanding()` (D13/D14)
+- `whisper_engine.py` — `TERMINATE_TIMEOUT = 2.0` and
+  `terminate_outstanding()`: kill + `wait(timeout)`, clears
+  `whisper_process` only after a confirmed reap and only if the handle
+  is unchanged; does not take `_invoke_lock`, never touches pipes (M1
+  serialization preserved)
+- `test_live_supervisor.py` — +8 tests: quiescence across every F8
+  state and both flags, immediate return when idle, timeout
+  fault-injection with a fake process handle (kill + reap, no real
+  whisper-cli, no wall-clock timing), clean quiesce never touches the
+  child handle, `LIVE_ERROR` keeps F8 allowed / `toggle()` recovers /
+  `reconcile()` never auto-restarts
+
+New:
+
+- `test_tray.py` (10 tests) — D6 matrix, overlay priority, thin
+  `update_tray` loop against a fake icon, `exit_application`
+  ordering + `finally` behavior
+- `test_config_persistence.py` (8 tests) — temp-config round trip,
+  defaults/unreadable fallback, no temp leftovers, D8 through the real
+  tray callback, structural check that `main.py` holds no config writer
+
+Documentation (all eight `docs/` files updated): `DECISIONS.md`
+D13–D15 + D4/D6/D8 notes, `ARCHITECTURE.md`, `PROGRESS.md`,
+`TEST_STATUS.md`, `ROADMAP.md` (deferrals), `HANDOVER.md`,
+`project_state.json`.
+
+Verification performed this session: 152/152 tests, ruff clean on all
+touched files, full repo still 30 pre-existing findings, `config.json`
+SHA-256 identical before/after the smoke run, `audio.py` /
+`live_capture.py` / `main.py` diff-clean vs HEAD.
 
 ---
 
 ## Current blocker
 
-Manual tray validation has not been performed. Required checks:
+**Gate, not a defect.** Implementation, synthetic tests and the
+targeted 7d.1 smoke re-run are complete. The session stopped as
+instructed at the implementation/test-review gate.
 
-1. Live ON/OFF menu semantics (checked state follows actual state)
-2. Failed live start → `LIVE_ERROR`, menu not left checked, retry works
-3. Tray Exit terminates the real Python process (not just the icon)
-4. Exit during `LIVE_LISTENING`
-5. Exit during F8 `PROCESSING`
-6. F8 rejected while live owns the mic
-7. Status rendering precedence when F8 owns the foreground state
+Environment limitations encountered (both reproducible outside the
+application; recorded with evidence in `docs/TEST_STATUS.md`):
 
-Full procedure and expected observations: `docs/TEST_STATUS.md`.
+1. **`GetCursorPos` denied** (`WinError 5`) in this session — pystray
+   `_on_notify` therefore raises `PermissionError` before application
+   code runs, so the `physical_exit` smoke scenario cannot open a menu
+   here. The same call fails from a plain `python -c`; the identical
+   harness passed this scenario on 7d.1.
+2. **Global key injection is not delivered** — `keyboard`/`keybd_event`
+   presses never reach the F8 hook (`f8_press_hook_seen=False`), so the
+   harness used its documented direct fallback (`main.f8_down()` /
+   `main.f8_up()`). Mid-`PROCESSING` Exit coverage was recovered with a
+   supplementary out-of-repo driver (quiesce 2.423 s, exit 0, no
+   orphaned Whisper child).
+
+Remaining (non-blocking) items:
+
+1. **Review + approval** of the 7d.2 diff before any commit
+   (`commit_allowed=false` until then); the 7d.1 push decision remains
+   separate (`push_allowed=false`).
+2. **Deferred by decision (D13–D15, listed in `ROADMAP.md`):** stale
+   tray title on the stopped icon object after Exit; startup restore
+   retry on next launch (persisted `live_mode_enabled=true` simply
+   stays `true`); hardening of second-caller shutdown semantics.
+3. **D6 addendum wording** was reconstructed from the approved decision
+   summary in this session — confirm it matches the original proposal
+   during review.
 
 ---
 
 ## Exact commands
 
 ```powershell
-# tests (126 expected)
+# tests (152 expected)
 python -m unittest discover -v
 
 # single suites
 python -m unittest test_live_supervisor -v
+python -m unittest test_tray -v
+python -m unittest test_config_persistence -v
 python -m unittest test_integration_7d -v
 
 # lint (ruff lives in the user bin folder, not on PATH)
@@ -221,9 +313,10 @@ Notes:
 - The project venv (`.venv`) contains only runtime deps
   (sounddevice, numpy, keyboard, pyperclip, pyautogui, PIL).
 - Full-repo `ruff check .` currently reports 30 pre-existing findings in
-  files untouched by 7d.1 (`live_capture.py`, `recovery.py`,
-  `text_output.py`, `runtime_validation.py`, `real_mic_validation*.py`).
-  All 7d.1-touched files are clean.
+  files untouched by 7d.1/7d.2 (`live_capture.py` 5, `text_output.py` 7,
+  `real_mic_validation_7c.py` 14, `real_mic_validation.py` 2,
+  `recovery.py` 1, `runtime_validation.py` 1). All 7d.1/7d.2-touched
+  files are clean.
 
 ---
 
@@ -233,17 +326,17 @@ Notes:
 >
 > First read `docs/HANDOVER.md`, then `docs/TEST_STATUS.md` and `docs/DECISIONS.md`.
 >
-> Current checkpoint is `dd5d231`. 7d.1 production implementation is complete but **not committed**. `126/126` automated tests pass and the manual tray smoke test passed (2026-10-07, 8/8 scenarios, all children exit code 0).
+> HEAD is still **`dc5c4aa` "Integrate live transcription lifecycle"** (7d.1), committed locally and **NOT pushed** (`[ahead 1]`). **7d.2 is implemented but UNCOMMITTED** — it lives only in the working tree: `tray.py`, `live_supervisor.py`, `whisper_engine.py`, `test_live_supervisor.py`, new `test_tray.py` and `test_config_persistence.py`, plus all eight `docs/` files.
 >
-> **Do not modify production code. Do not commit. Do not push.**
+> `152/152` automated tests pass and ruff is clean on every touched file. The targeted 7d.1 smoke re-run passed 7/8 scenarios (the eighth, `physical_exit`, is blocked by this session's denied `GetCursorPos` — environment, see `docs/TEST_STATUS.md`), and a supplementary driver proved Exit during `PROCESSING` quiesces in 2.423 s and exits 0 with no orphaned Whisper child.
 >
-> The validation blocker is cleared. Read `docs/TEST_STATUS.md` → "Manual tray smoke test" for the exact recorded observations.
+> **Do not commit. Do not push. Do not start new work.**
 >
-> Next action: **request approval for the 7d.1 commit**. If approval is granted, commit only the 7d.1 code files — never `config.json`, `whisper/whisper-vulkan`, or `real_mic_validation*.py`. Do not push without approval.
+> Next action: **review** — inspect `git status` and `git diff` for the 7d.2 changes, read `docs/TEST_STATUS.md` → "7d.2 targeted smoke re-run", then request explicit approval for the 7d.2 checkpoint commit (staging only 7d.2 code/tests/docs) and, separately, the push decision for `dc5c4aa`.
 >
-> Known open gap recorded during validation: no unit test covers `tray.update_tray` status-rendering precedence (it was observed live, but it is not test-covered).
+> Working tree must contain only the known exclusions plus the 7d.2 changes listed above: `config.json`, `whisper/whisper-vulkan`, `real_mic_validation.py`, `real_mic_validation_7c.py`, and the pre-existing icon PNG dirt (`error.png`, `idle.png`, `processing.png`, `recording.png`).
 >
-> Do not begin 7d.2.
+> Items deferred inside 7d.2 by decision: stale tray title, startup restore retry, second-caller shutdown semantics (`ROADMAP.md` → "Known deferred items").
 
 ---
 
@@ -281,3 +374,5 @@ session end (see the rule above).
 | 2026-10-07 | 7d.1 implementation | Added `live_supervisor` lifecycle boundary, F8/live gate, tray Exit + live menu | complete, awaiting smoke test | 126/126 tests, 7d.1 files lint-clean |
 | 2026-10-07 | Documentation | Created `docs/` handover layer, authority model, forbidden assumptions | complete | `project_state.json` validated |
 | 2026-10-07 | 7d.1 manual smoke test | Ran the `docs/TEST_STATUS.md` tray checklist with an out-of-repo harness (8 scenarios: tray Exit from `LIVE_IDLE`/`LIVE_LISTENING`/F8 `PROCESSING`, Live ON/OFF, forced `LIVE_ERROR` + retry, config persistence, F8 rejection, rendering precedence, physical Win32 menu Exit) | **PASS** — all 8 children exited code 0, no leftover Whisper process, `config.json.live_mode_enabled=false`, `git status` unchanged, no commit | 126/126 re-run OK (11.35 s), `ruff check` on 7d.1 files clean, results in `%TEMP%\opencode\smoke_7d1_results.json` |
+| 2026-10-07 | 7d.1 checkpoint commit | Approved commit: staged only `app_state.py config.py main.py tray.py live_supervisor.py test_integration_7d.py test_live_supervisor.py docs/`; excluded `config.json`, `whisper/whisper-vulkan`, `real_mic_validation*.py` | committed **`dc5c4aa` "Integrate live transcription lifecycle"** (14 files, +1826/−11), **not pushed**, branch `[ahead 1]` | 126/126 tests OK (11.45 s) and `ruff check` clean immediately before commit; `git log -1 --stat` verified; `git status` shows only the four exclusions + this doc sync |
+| 2026-10-07 | 7d.2 implementation (this session) | Approved scope: extracted `tray.display_status` + D6/overlay/thin-loop/Exit tests, extended `shutdown()` quiescence to every F8 state with `whisper_engine.terminate_outstanding()` on timeout, `exit_application` `try`/`finally`, `LIVE_ERROR` + config-persistence suites, docs D13–D15 | **complete, UNCOMMITTED — stopped at the implementation/test-review gate as instructed; no commit, no push** | 152/152 tests OK (17.1 s), ruff clean on all touched files, full repo 30 pre-existing findings, `config.json` SHA-256 unchanged, `audio.py`/`live_capture.py`/`main.py` diff-clean; smoke re-run 7/8 PASS (`physical_exit` = denied `GetCursorPos`, environment) + supplementary `PROCESSING` Exit driver PASS (2.423 s quiesce, exit 0, no Whisper leftover) |
