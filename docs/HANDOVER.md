@@ -1,11 +1,11 @@
 # Windows Voice Assistant — Agent Handover
 
-Last updated: 2026-10-07 (post-7d.2 push; docs sync commit pending push — Schannel CRL offline)
+Last updated: 2026-10-07 (docs sync pushed; repository fully checkpointed)
 Repository: `C:\VoiceAssistant\Version2`
 Branch: `backend-foundation`
-Current HEAD: `f186167` — Sync handover docs to pushed 7d.2 checkpoint (local only)
-Base checkpoint: `4de4bfd` — Harden live transcription shutdown and tray lifecycle (7d.2), **pushed**
-Remote: `origin/backend-foundation` — at `4de4bfd`; local is **ahead 1** (docs sync commit, push currently blocked by Schannel `CRYPT_E_REVOCATION_OFFLINE`; retry push before treating the repo as fully checkpointed)
+Current HEAD: `28b3eaf` — Sync handover docs to pushed 7d.2 checkpoint
+Base checkpoint: `4de4bfd` — Harden live transcription shutdown and tray lifecycle (7d.2)
+Remote: `origin/backend-foundation` — **synced with HEAD (`28b3eaf`, pushed 2026-10-07)**
 Worktree: **7d.2 is committed and pushed.** Working tree contains only
 the expected exclusions (`config.json`, `whisper/whisper-vulkan`,
 `real_mic_validation*.py`) and the local icon PNG experiments
@@ -327,7 +327,7 @@ Notes:
 >
 > First read `docs/HANDOVER.md`, then `docs/TEST_STATUS.md` and `docs/DECISIONS.md`.
 >
-> HEAD is **`4de4bfd` "Harden live transcription shutdown and tray lifecycle"** (7d.2), committed locally and **pushed** — `backend-foundation` matches `origin/backend-foundation`.
+> HEAD is **`28b3eaf` "Sync handover docs to pushed 7d.2 checkpoint"** on top of the 7d.2 checkpoint **`4de4bfd` "Harden live transcription shutdown and tray lifecycle"**, both committed locally and **pushed** — `backend-foundation` matches `origin/backend-foundation` (no ahead/behind).
 >
 > `152/152` automated tests pass and ruff is clean on every touched file. The targeted 7d.1 smoke re-run passed 7/8 scenarios (the eighth, `physical_exit`, is blocked by this session's denied `GetCursorPos` — environment, see `docs/TEST_STATUS.md`), and a supplementary driver proved Exit during `PROCESSING` quiesces in 2.423 s and exits 0 with no orphaned Whisper child.
 >
