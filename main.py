@@ -1,9 +1,10 @@
 import atexit
 import os
 import threading
-import time
 
 import audio
+import config
+import live_supervisor
 import logger
 import recovery
 import runtime_validation
@@ -47,6 +48,8 @@ def cleanup():
 
     logger.info("Cleaning up")
 
+    live_supervisor.shutdown()
+
     recovery.stop_startup_retry()
 
     if audio.is_recording:
@@ -71,6 +74,16 @@ tray_thread.start()
 def f8_down():
 
     global f8_active
+
+    allowed, code = live_supervisor.f8_request()
+
+    if not allowed:
+        if code == live_supervisor.F8_BLOCKED:
+            show_microphone_warning(live_supervisor.F8_BLOCKED_MESSAGE)
+        else:
+            logger.info("Ignoring F8: application shutting down")
+
+        return
 
     if f8_active:
         return
@@ -254,7 +267,7 @@ def safe_f8_down(e):
     try:
         f8_down()
 
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - safe wrapper reports it
         logger.error(f"F8 press error: {type(error).__name__}: {error}")
 
 
@@ -265,7 +278,7 @@ def safe_f8_up(e):
     try:
         f8_up()
 
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - unlock must run anyway
         # Release must unlock even if f8_up failed before clearing the lock.
         f8_active = False
 
@@ -291,6 +304,16 @@ recovery.configure_f8_handlers(safe_f8_down, safe_f8_up)
 
 if runtime_validation.run_startup_validation():
     recovery.register_f8()
+
+    if config.load_config().get("live_mode_enabled", False):
+        started, reason = live_supervisor.start()
+
+        if started:
+            logger.info("Live transcription enabled at startup")
+        else:
+            logger.warning(
+                f"Live transcription startup refused: {reason}"
+            )
 else:
     logger.error("Startup validation failed; F8 hotkey not registered")
     tray.show_startup_error(runtime_validation.last_error)
@@ -300,11 +323,16 @@ else:
 # ================= MAIN LOOP =================
 
 try:
-    while True:
-        time.sleep(1)
+    while not live_supervisor.shutdown_event().wait(1.0):
+        live_supervisor.reconcile()
 
+    logger.info("Voice Assistant stopped")
+
+    print("\nVoice assistant stopped.")
 
 except KeyboardInterrupt:
+    live_supervisor.shutdown()
+
     logger.info("Voice Assistant stopped")
 
     print("\nVoice assistant stopped.")

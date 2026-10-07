@@ -8,6 +8,8 @@ class AppState:
 
         self.status = "IDLE"
 
+        self.live_status = "LIVE_IDLE"
+
         self.recording = False
 
         self.processing = False

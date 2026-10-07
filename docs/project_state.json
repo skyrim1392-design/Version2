@@ -1,0 +1,39 @@
+{
+  "project": "Windows Voice Assistant",
+  "phase": "7d.1",
+  "status": "manual_validation_passed_awaiting_commit_approval",
+  "branch": "backend-foundation",
+  "commit": "dd5d231",
+  "commit_subject": "Complete 7c live transcription delivery and serialization",
+  "remote": "origin/backend-foundation",
+  "synced": true,
+  "worktree_dirty": true,
+  "tests": 126,
+  "tests_passed": 126,
+  "test_command": "python -m unittest discover -v",
+  "lint_7d_files": "pass",
+  "lint_full_repo": "30 pre-existing findings outside 7d.1",
+  "manual_validation": "passed_2026-10-07",
+  "manual_validation_scenarios": 8,
+  "manual_validation_result": "8/8 scenarios, all child processes exit code 0",
+  "open_gap": "no unit test covers tray.update_tray rendering precedence",
+  "next_action": "request_7d_1_commit_approval",
+  "commit_allowed": false,
+  "push_allowed": false,
+  "start_7d_2": false,
+  "never_commit": [
+    "config.json",
+    "whisper/whisper-vulkan",
+    "real_mic_validation.py",
+    "real_mic_validation_7c.py"
+  ],
+  "authoritative_doc": "docs/HANDOVER.md",
+  "docs": [
+    "docs/HANDOVER.md",
+    "docs/DECISIONS.md",
+    "docs/ARCHITECTURE.md",
+    "docs/TEST_STATUS.md",
+    "docs/PROGRESS.md",
+    "docs/ROADMAP.md"
+  ]
+}

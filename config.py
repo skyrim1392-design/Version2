@@ -18,6 +18,7 @@ DEFAULT_CONFIG = {
     "task_mode": "TRANSCRIBE",
     "microphone": "auto",
     "push_key": "f8",
+    "live_mode_enabled": False,
     "audio": {"input_sample_rate": 44100, "whisper_sample_rate": 16000, "channels": 1},
     "threads": 8,
     "whisper_backend": "AUTO",

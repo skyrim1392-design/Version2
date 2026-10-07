@@ -6,6 +6,7 @@ import pystray
 from PIL import Image
 
 import hardware
+import live_supervisor
 import logger
 import microphone_diagnostics
 from app_state import state
@@ -25,6 +26,7 @@ warning_lock = threading.Lock()
 microphone_error = False
 startup_error = False
 startup_error_message = None
+stopping = False
 
 # Display states that always win over the temporary warning overlay.
 ACTIVE_STATES = ("RECORDING", "PROCESSING", "OUTPUTTING")
@@ -56,6 +58,8 @@ def create_icon(status):
         "OUTPUTTING": "processing.png",
         "WARNING": "error.png",
         "ERROR": "error.png",
+        "LIVE_LISTENING": "recording.png",
+        "LIVE_ERROR": "error.png",
         # Use the existing error icon until a dedicated suspect icon is designed.
         "SUSPECT": "error.png",
     }
@@ -243,6 +247,28 @@ def build_model_items():
     ]
 
 
+# ================= LIVE TRANSCRIPTION =================
+
+
+def is_live_active(item):
+    return state.live_status == live_supervisor.LIVE_LISTENING
+
+
+def live_toggle(icon, item):
+    ok, reason = live_supervisor.toggle()
+
+    if not ok:
+        logger.warning(f"Live transcription toggle refused: {reason}")
+        return
+
+    set_config_value(
+        "live_mode_enabled",
+        state.live_status == live_supervisor.LIVE_LISTENING,
+    )
+
+    logger.info(f"Live transcription: {state.live_status}")
+
+
 # ================= MICROPHONE DIAGNOSTICS =================
 
 
@@ -349,7 +375,14 @@ def clear_startup_error():
 
 
 def exit_application(icon, item):
+    global stopping
+
     logger.info("Exiting Voice Assistant")
+
+    stopping = True
+
+    live_supervisor.shutdown()
+
     icon.stop()
 
 
@@ -363,9 +396,18 @@ def update_tray(icon):
     warning_active = False
     last_warning_message = None
 
-    while True:
+    while not stopping:
         with state.lock:
             current_status = state.status
+            current_live = state.live_status
+
+        display_status = current_status
+
+        if current_status == "IDLE":
+            if current_live == live_supervisor.LIVE_ERROR:
+                display_status = "LIVE_ERROR"
+            elif current_live == live_supervisor.LIVE_LISTENING:
+                display_status = "LIVE_LISTENING"
 
         with warning_lock:
             current_warning_until = warning_until
@@ -455,14 +497,14 @@ def update_tray(icon):
         # NORMAL APPLICATION STATUS
         # -------------------------------------------------
 
-        if current_status != last_status:
-            logger.info(f"Tray status: {current_status}")
+        if display_status != last_status:
+            logger.info(f"Tray status: {display_status}")
 
-            icon.icon = create_icon(current_status)
+            icon.icon = create_icon(display_status)
 
-            last_status = current_status
+            last_status = display_status
 
-        icon.title = "Voice Assistant - " + current_status
+        icon.title = "Voice Assistant - " + display_status
 
         time.sleep(0.5)
 
@@ -500,6 +542,11 @@ def start_tray():
         pystray.MenuItem("Voice Assistant", None, enabled=False),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Microphone", microphone_menu),
+        pystray.MenuItem(
+            "Live Transcription",
+            live_toggle,
+            checked=is_live_active,
+        ),
         pystray.MenuItem("Backend", backend_menu),
         pystray.MenuItem("Language", language_menu),
         pystray.MenuItem("Task", task_menu),
